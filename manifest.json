@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Krillion Helper",
+  "version": "1.1.0",
+  "description": "Suggests and fills answers on krillion.io using your own API key.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.anthropic.com/*", "https://krillion.io/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Krillion Helper" },
+  "content_scripts": [
+    {
+      "matches": ["https://krillion.io/*"],
+      "js": ["humanize.js", "content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

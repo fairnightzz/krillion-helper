@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Krillion Helper</title>
+<style>
+  body { width: 300px; margin: 0; padding: 14px; font: 13px/1.4 system-ui, sans-serif; color: #e8f4ff; background: #0b1a26; }
+  h1 { font-size: 14px; letter-spacing: 0.1em; margin: 0 0 10px; color: #7fe3ff; }
+  label { display: block; margin: 10px 0 4px; font-size: 12px; color: #a9c7d8; }
+  input[type=password], input[type=text], select { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #2d4a5e; background: #091420; color: #e8f4ff; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .row label { margin: 0; }
+  button { padding: 6px 10px; border-radius: 6px; border: 1px solid #3b6f8a; background: #123247; color: #e8f4ff; cursor: pointer; }
+  button:hover { background: #1a4460; }
+  #status { margin-top: 10px; min-height: 18px; font-size: 12px; }
+  #status.ok { color: #9ff5b0; }
+  #status.err { color: #ff9b9b; }
+  .hint { font-size: 11px; color: #7f9bad; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>KRILLION · HELPER</h1>
+
+  <label for="apiKey">API key</label>
+  <input id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off">
+
+  <label for="model">Model</label>
+  <select id="model">
+    <option value="claude-opus-5-5">Opus 5.5 (default)</option>
+    <option value="claude-sonnet-5-5">Sonnet 5.5 (faster, cheaper)</option>
+    <option value="claude-haiku-4-5">Haiku 4.5 (fastest, cheapest)</option>
+  </select>
+
+  <label for="effort">Effort (speed vs. depth)</label>
+  <select id="effort">
+    <option value="low">low — fastest</option>
+    <option value="medium">medium</option>
+    <option value="high">high — slowest</option>
+  </select>
+
+  <label for="mode">Mode</label>
+  <select id="mode">
+    <option value="auto">Fill and submit automatically</option>
+    <option value="fill">Fill the box, I press Enter</option>
+    <option value="suggest">Only show suggestions</option>
+  </select>
+
+  <p class="hint">In rated Puffer Party, the helper only types (human-like, one keystroke at a time) when it is your turn. Turn on Auto-press Enter below to submit after typing; otherwise you press Enter. Set the mode to “suggest” to turn that typing off. Casual party games stay suggest-only.</p>
+
+  <div class="row"><input id="autoEnter" type="checkbox"><label for="autoEnter">Auto-press Enter in rated Party after typing</label></div>
+  <div class="row"><input id="autoAdvance" type="checkbox"><label for="autoAdvance">Auto-click "descend" after each answer</label></div>
+  <div class="row"><input id="showOverlay" type="checkbox"><label for="showOverlay">Show on-page overlay</label></div>
+
+  <div class="row">
+    <button id="save">Save</button>
+    <button id="test">Test key</button>
+  </div>
+  <div id="status"></div>
+  <p class="hint">The key is stored only in this browser profile (chrome.storage.local) and sent only to api.anthropic.com.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

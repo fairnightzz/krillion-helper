@@ -1,0 +1,45 @@
+#kch-overlay {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 2147483647;
+  max-width: 260px;
+  padding: 8px 10px;
+  background: rgba(6, 20, 32, 0.88);
+  color: #d9f3ff;
+  border: 1px solid rgba(120, 220, 255, 0.35);
+  border-radius: 8px;
+  font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  pointer-events: none;
+}
+#kch-overlay .kch-head {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #7fe3ff;
+  margin-bottom: 2px;
+}
+#kch-overlay .kch-mode {
+  font-weight: 400;
+  opacity: 0.7;
+  text-transform: uppercase;
+  margin-left: 6px;
+}
+#kch-overlay .kch-status { opacity: 0.9; }
+#kch-overlay .kch-status.kch-err { color: #ff9b9b; }
+#kch-overlay ol {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+#kch-overlay li { opacity: 0.6; }
+#kch-overlay li.kch-cur { opacity: 1; color: #fff; font-weight: 700; }
+#kch-overlay li.kch-rej { text-decoration: line-through; opacity: 0.4; }
+
+#kch-overlay .kch-hint { margin-left: 8px; font-weight: 400; opacity: 0.6; text-transform: none; }
+#kch-overlay li { pointer-events: auto; cursor: pointer; }
+#kch-overlay li:hover { color: #fff; opacity: 1; }
+#kch-overlay li.kch-copied { color: #9ff5b0; opacity: 1; }
+#kch-overlay li.kch-copied::after { content: "  copied"; font-size: 10px; opacity: 0.8; }
+#kch-overlay.kch-rated .kch-head { color: #ffd479; }
+#kch-overlay.kch-party { font-size: 14px; max-width: 340px; }
+#kch-overlay.kch-party ol { columns: 2; column-gap: 16px; }
+#kch-overlay.kch-party li { break-inside: avoid; padding: 1px 0; }
