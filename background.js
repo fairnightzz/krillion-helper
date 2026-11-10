@@ -4,6 +4,23 @@
 const API_URL = "https://api.anthropic.com/v1/messages";
 const MODELS_URL = "https://api.anthropic.com/v1/models";
 
+// A hung request must not strand the game in "thinking…" for the
+// whole answer window: the platform gives fetch no default timeout.
+const API_TIMEOUT_MS = 20000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function fetchWithTimeout(url, options, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error("API request timed out");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const DEFAULTS = {
   apiKey: "",
   model: "claude-opus-5-5",
@@ -11,7 +28,6 @@ const DEFAULTS = {
   mode: "auto",        // auto | fill | suggest
   autoAdvance: false,
   showOverlay: true,
-  autoEnter: false,
   candidateCount: 8,
 };
 
@@ -175,7 +191,7 @@ const CLASSICAL_WORDS = {
   diarrhoea: "diarrhea", manoeuvre: "maneuver",
 };
 function canonicalWord(w) {
-  if (w === "grey") return "gray";
+  w = w.replace(/grey/g, "gray");
   if (Object.hasOwn(CLASSICAL_WORDS, w)) return CLASSICAL_WORDS[w];
   for (const stem of COLOUR_STEMS) {
     if (w === stem || (w.startsWith(stem) && COLOUR_SUFFIXES.includes(w.slice(stem.length)))) {
@@ -197,21 +213,37 @@ function canonicalWord(w) {
 function canonicalKey(text) {
   return String(text || "")
     .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/æ/g, "ae")
+    .replace(/œ/g, "oe")
+    .replace(/ß/g, "ss")
+    .replace(/ø/g, "o")
+    .replace(/ł/g, "l")
+    .replace(/đ/g, "d")
+    .replace(/þ/g, "th")
+    .replace(/ð/g, "d")
+    .replace(/ı/g, "i")
     .replace(/[“”"]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
+    .split(/[^a-z0-9]+/)
     .filter(Boolean)
-    .map((token) => token.split("-").map((part) => canonicalWord(part.replace(/[.,;:!?]+$/, ""))).join("-"))
-    .join(" ");
+    .map(canonicalWord)
+    .join("");
 }
 
 // A whole-line section heading: "RARE:", "## Common", "**COMMON:**",
 // "Safe answers", and so on. Anything else is a candidate line.
 function sectionHeaderKind(line) {
+  // Headings arrive with counts and numbering too: "RARE (12):",
+  // "1. RARE:", "RARE: 12". Strip those decorations before the
+  // exact match, or the heading line becomes a literal candidate.
   const h = line
     .trim()
     .replace(/^[#>*\-•\s\*\_]+/, "")
+    .replace(/^\d{1,2}[.)]\s+/, "")
+    .replace(/[*_#\s:]+$/, "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\s+\d+\s*$/, "")
     .replace(/[*_#\s:]+$/, "")
     .trim()
     .toLowerCase();
@@ -225,6 +257,7 @@ function inlineHeader(line) {
   const m = line
     .trim()
     .replace(/^[#>*\-•\s\*\_]+/, "")
+    .replace(/^\d{1,2}[.)]\s+/, "")
     .match(/^(rarest|rare|common|safe)(\s+(answers?|candidates?|fallbacks?))?\s*:\s*(.+)$/i);
   if (!m) return null;
   return { kind: m[1].toLowerCase() === "rare" || m[1].toLowerCase() === "rarest" ? "rare" : "common", suffix: m[4] };
@@ -320,35 +353,64 @@ async function callApi({ prompt, exclude, party, kind }, settings, useFallbacks)
     headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
     body.fallbacks = "default";
   }
-  const res = await fetch(API_URL, { method: "POST", headers, body: JSON.stringify(body) });
+  const res = await fetchWithTimeout(API_URL, { method: "POST", headers, body: JSON.stringify(body) }, API_TIMEOUT_MS);
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = json?.error?.message || `HTTP ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
+    const ra = res.headers && typeof res.headers.get === "function" ? res.headers.get("retry-after") : null;
+    const secs = ra == null ? NaN : Number(ra);
+    if (Number.isFinite(secs) && secs >= 0) err.retryAfterMs = Math.min(secs * 1000, 10000);
     throw err;
   }
   return json;
+}
+
+// One plain call, retrying only the 400 that the server-side
+// fallback beta can cause. Transient statuses are retried by the
+// caller, which owns the attempt budget.
+async function callApiWithFallback(req, settings) {
+  try {
+    return await callApi(req, settings, true);
+  } catch (e) {
+    if (e.status === 400 && supportsDefaultFallbacks(settings.model)) {
+      return callApi(req, settings, false);
+    }
+    throw e;
+  }
 }
 
 async function getAnswers(req) {
   const settings = await getSettings();
   if (!settings.apiKey) throw new Error("No API key set. Click the extension icon to add one.");
 
+  // Transient failures get up to three attempts with backoff
+  // (the server's Retry-After, capped so a retry can still land
+  // inside the answer window). Anything else fails at once.
   let json;
-  try {
-    json = await callApi(req, settings, true);
-  } catch (e) {
-    // If the fallback beta isn't accepted for some reason, retry plainly.
-    if (e.status === 400 && supportsDefaultFallbacks(settings.model)) {
-      json = await callApi(req, settings, false);
-    } else {
-      throw e;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      json = await callApiWithFallback(req, settings);
+      break;
+    } catch (e) {
+      lastError = e;
+      const retryable = e.status === 429 || e.status === 500 || e.status === 502 || e.status === 503 || e.status === 529;
+      if (!retryable || attempt === 2) throw e;
+      await sleep(Math.min(e.retryAfterMs != null ? e.retryAfterMs : 500 * (attempt + 1), 3000));
     }
   }
+  if (!json) throw lastError || new Error("no response from the answer API.");
 
   if (json.stop_reason === "refusal") {
     throw new Error("the model declined this prompt (" + (json.stop_details?.category || "refusal") + ").");
+  }
+  if (json.stop_reason === "max_tokens") {
+    throw new Error("the model reply was truncated (max_tokens); no complete candidate list was returned.");
+  }
+  if (json.stop_reason === "error") {
+    throw new Error("the model returned an error and no candidates.");
   }
   const text = (json.content || [])
     .filter((b) => b.type === "text")
@@ -357,7 +419,9 @@ async function getAnswers(req) {
   if (req.party) {
     const kind = req.kind === "rare" || req.kind === "common" ? req.kind : "both";
     const sections = parseSections(text, req.exclude, {
-      tailSize: kind === "both" ? 6 : 0,
+      // The fallback split must match the request: 12 rare + 10
+      // common, so the last 10 of a flat list are the bench.
+      tailSize: kind === "both" ? 10 : 0,
       defaultSection: kind === "rare" ? "rare" : kind === "common" ? "common" : null,
     });
     const candidates = [...sections.rare, ...sections.common];
@@ -370,13 +434,13 @@ async function getAnswers(req) {
 }
 
 async function testKey(apiKey) {
-  const res = await fetch(MODELS_URL + "?limit=1", {
+  const res = await fetchWithTimeout(MODELS_URL + "?limit=1", {
     headers: {
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
-  });
+  }, 15000);
   if (res.ok) return { ok: true };
   const json = await res.json().catch(() => ({}));
   return { ok: false, error: json?.error?.message || `HTTP ${res.status}` };
@@ -395,9 +459,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
     return true;
   }
-  if (msg?.type === "getSettings") {
-    getSettings().then(sendResponse);
-    return true;
-  }
+  // No getSettings handler: nothing in the extension asks the
+  // worker for settings (popup and content script read storage
+  // directly), and answering would hand the API key to any
+  // same-extension sender that asks for it.
   return false;
 });

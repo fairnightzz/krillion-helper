@@ -45,7 +45,10 @@ function planTyping(text, rng, opts) {
   if (allowTypos && chars.length >= 5 && random() < typoProbability) {
     const spots = [];
     for (let i = 2; i < chars.length - 1; i += 1) {
-      if (chars[i] !== " ") spots.push(i);
+      // A typo replaces the character with a random letter, so it
+      // can only land on a letter: digits and punctuation would
+      // otherwise turn into implausible letters.
+      if (/[A-Za-z]/.test(chars[i])) spots.push(i);
     }
     if (spots.length) typoPos = spots[Math.floor(random() * spots.length)];
   }
@@ -163,10 +166,16 @@ function typeHumanlike(input, text, opts) {
     if (shouldContinue && !shouldContinue(prefix, i)) return finish(false);
     timer = schedule(() => {
       timer = null;
-      if (cancelled) return finish(false);
-      if (shouldContinue && !shouldContinue(prefix, i)) return finish(false);
-      apply(steps[i].value, steps[i], input);
-      run(i + 1, steps[i].value);
+      try {
+        if (cancelled) return finish(false);
+        if (shouldContinue && !shouldContinue(prefix, i)) return finish(false);
+        apply(steps[i].value, steps[i], input);
+        run(i + 1, steps[i].value);
+      } catch (_) {
+        // A throwing step must settle done as failed, not wedge it
+        // pending forever with no timer left to rescue it.
+        return finish(false);
+      }
     }, steps[i].delay);
   }
   if (!input && !options.apply) {
@@ -174,7 +183,11 @@ function typeHumanlike(input, text, opts) {
   } else {
     // initialValue is the value already in the box (e.g. a prefix typed
     // before an interruption); shouldContinue is checked against it.
-    run(0, options.initialValue || "");
+    try {
+      run(0, options.initialValue || "");
+    } catch (_) {
+      finish(false);
+    }
   }
   return {
     cancel() {

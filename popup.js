@@ -15,10 +15,9 @@ const DEFAULTS = {
   mode: "auto",
   autoAdvance: false,
   showOverlay: true,
-  autoEnter: false,
 };
 const fields = ["apiKey", "model", "effort", "mode"];
-const checks = ["autoAdvance", "showOverlay", "autoEnter"];
+const checks = ["autoAdvance", "showOverlay"];
 const statusEl = document.getElementById("status");
 
 function show(msg, cls) {
@@ -33,9 +32,25 @@ function collect() {
   return out;
 }
 
+// Fields the user has edited since the popup opened: a late
+// storage answer must never overwrite them.
+const edited = new Set();
 function fill(s) {
-  const merged = { ...DEFAULTS, ...(s || {}) };
-  for (const f of fields) document.getElementById(f).value = merged[f] == null ? "" : merged[f];
+  // Merge over the values already showing, not just over
+  // defaults: a partial storage answer must not reset the fields
+  // it does not mention to defaults.
+  const merged = { ...DEFAULTS, ...collect(), ...(s || {}) };
+  for (const f of fields) {
+    const el = document.getElementById(f);
+    let v = merged[f] == null ? "" : merged[f];
+    // An unmatched stored value must fall back to the default,
+    // never blank the select (a blank select persists as "").
+    if (el && el.options) {
+      const allowed = Array.from(el.options, (o) => o.value);
+      if (allowed.length && !allowed.includes(v)) v = DEFAULTS[f];
+    }
+    el.value = v;
+  }
   for (const c of checks) document.getElementById(c).checked = !!merged[c];
 }
 
@@ -44,6 +59,7 @@ function fill(s) {
 // appeared after it answered, which is the wait felt when opening the
 // popup. The mirror shows saved settings on the first paint; the
 // async storage read below stays authoritative and refreshes it.
+// The API key is never mirrored: it waits for the storage read.
 // chrome.storage.local remains the source of truth (the content
 // script and worker can only read that one); the mirror is never
 // read anywhere else.
@@ -54,7 +70,11 @@ function readMirror() {
     const raw = localStorage.getItem(MIRROR_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    // Mirrors written by older versions may contain the key; never
+    // read it back from here. The key waits for the storage read.
+    delete parsed.apiKey;
+    return parsed;
   } catch (_) {
     return null;
   }
@@ -62,7 +82,12 @@ function readMirror() {
 function writeMirror(values) {
   try {
     if (typeof localStorage === "undefined") return;
-    localStorage.setItem(MIRROR_KEY, JSON.stringify(values));
+    // The key lives only in chrome.storage.local (see popup.html):
+    // it is never copied into localStorage, where clearing the
+    // extension store would leave it behind.
+    const copy = { ...values };
+    delete copy.apiKey;
+    localStorage.setItem(MIRROR_KEY, JSON.stringify(copy));
   } catch (_) {
     // Mirror is best-effort; chrome.storage.local below is authoritative.
   }
@@ -78,8 +103,17 @@ function persist(showSaved) {
   writeMirror(out);
   chrome.storage.local.set(out, () => {
     const err = chrome.runtime.lastError;
-    if (err) show("Could not save settings: " + err.message, "err");
-    else if (showSaved) show("Saved.", "ok");
+    if (err) {
+      show("Could not save settings: " + err.message, "err");
+      // The mirror must not keep values the store rejected: refresh
+      // it from what storage actually holds.
+      chrome.storage.local.get(null, (s2) => {
+        if (chrome.runtime.lastError || !s2) return;
+        const keep = collect();
+        for (const k of [...fields, ...checks]) if (k in s2) keep[k] = s2[k];
+        writeMirror(keep);
+      });
+    } else if (showSaved) show("Saved.", "ok");
   });
 }
 
@@ -95,17 +129,21 @@ chrome.storage.local.get(null, (s) => {
     return;
   }
   // An empty answer must not blank values the mirror already showed.
+  // Fields edited while the read was in flight keep the user's
+  // values: the read is stale for those.
   if (s && hasKnownKey(s)) {
-    fill(s);
+    const fresh = { ...s };
+    for (const k of edited) delete fresh[k];
+    fill(fresh);
     writeMirror(collect());
   }
 });
 
-for (const f of fields) document.getElementById(f).addEventListener("change", () => persist(true));
-for (const c of checks) document.getElementById(c).addEventListener("change", () => persist(true));
+for (const f of fields) document.getElementById(f).addEventListener("change", () => { edited.add(f); persist(true); });
+for (const c of checks) document.getElementById(c).addEventListener("change", () => { edited.add(c); persist(true); });
 // The key saves as it is typed too, so closing the popup mid-typing
 // does not lose it; change/blur and Save cover the rest.
-document.getElementById("apiKey").addEventListener("input", () => persist(false));
+document.getElementById("apiKey").addEventListener("input", () => { edited.add("apiKey"); persist(false); });
 
 document.getElementById("save").addEventListener("click", () => persist(true));
 

@@ -17,11 +17,13 @@ function makeEl() {
   };
 }
 
-function loadPopup({ stored, deferGet, store, failSet, failGet, lsStore }) {
+function loadPopup({ stored, deferGet, store, failSet, failGet, lsStore, selectOptions, getSnapshot }) {
   const elements = {};
   const doc = {
     getElementById(id) {
-      return (elements[id] ||= makeEl());
+      const el = (elements[id] ||= makeEl());
+      if (selectOptions && selectOptions[id]) el.options = selectOptions[id].map((value) => ({ value }));
+      return el;
     },
   };
   // Shared backing store across loads (like chrome.storage.local); the
@@ -51,7 +53,9 @@ function loadPopup({ stored, deferGet, store, failSet, failGet, lsStore }) {
           const run = () => {
             if (failGet) chromeStub.runtime.lastError = { message: failGet };
             try {
-              cb(failGet ? {} : { ...backing });
+              // getSnapshot (when given) is the stale answer the read
+              // returns; backing is what set() writes to.
+              cb(failGet ? {} : { ...(getSnapshot || backing) });
             } finally {
               delete chromeStub.runtime.lastError;
             }
@@ -114,7 +118,7 @@ function loadPopup({ stored, deferGet, store, failSet, failGet, lsStore }) {
 
 test("popup fills fields from chrome.storage.local without messaging the worker at load", () => {
   const popup = loadPopup({
-    stored: { apiKey: "sk-ant-x", mode: "fill", autoEnter: true, showOverlay: false },
+    stored: { apiKey: "sk-ant-x", mode: "fill", showOverlay: false },
     deferGet: true,
   });
   // Defaults are in the fields immediately, before storage answers.
@@ -122,27 +126,24 @@ test("popup fills fields from chrome.storage.local without messaging the worker 
   assert.equal(popup.elements.model.value, "claude-opus-5-5");
   assert.equal(popup.elements.effort.value, "low");
   assert.equal(popup.elements.mode.value, "auto");
-  assert.equal(popup.elements.autoEnter.checked, false);
   assert.equal(popup.elements.showOverlay.checked, true);
   // No background round-trip was needed to show the popup.
   assert.deepEqual(popup.calls.messages, []);
   popup.flushGet();
   assert.equal(popup.elements.apiKey.value, "sk-ant-x");
   assert.equal(popup.elements.mode.value, "fill");
-  assert.equal(popup.elements.autoEnter.checked, true);
   assert.equal(popup.elements.showOverlay.checked, false);
   assert.equal(popup.elements.effort.value, "low");
   assert.deepEqual(popup.calls.messages, []);
   assert.equal(popup.calls.get.length, 1);
 });
 
-test("popup save writes every field including autoEnter through storage.local.set", () => {
+test("popup save writes every field through storage.local.set", () => {
   const popup = loadPopup({ stored: {} });
   popup.elements.apiKey.value = "  sk-ant-y  ";
   popup.elements.model.value = "claude-haiku-4-5";
   popup.elements.effort.value = "high";
   popup.elements.mode.value = "fill";
-  popup.elements.autoEnter.checked = true;
   popup.elements.autoAdvance.checked = true;
   popup.elements.showOverlay.checked = false;
   popup.click("save");
@@ -156,7 +157,6 @@ test("popup save writes every field including autoEnter through storage.local.se
       mode: "fill",
       autoAdvance: true,
       showOverlay: false,
-      autoEnter: true,
     },
   ]);
   assert.equal(popup.elements.status.textContent, "Saved.");
@@ -185,9 +185,9 @@ test("changing a setting persists without clicking Save", () => {
   popup.elements.model.value = "claude-haiku-4-5";
   popup.change("model");
   assert.equal(popup.store.model, "claude-haiku-4-5");
-  popup.elements.autoEnter.checked = true;
-  popup.change("autoEnter");
-  assert.equal(popup.store.autoEnter, true);
+  popup.elements.showOverlay.checked = false;
+  popup.change("showOverlay");
+  assert.equal(popup.store.showOverlay, false);
   assert.equal(popup.elements.status.textContent, "Saved.");
 });
 
@@ -205,7 +205,6 @@ test("empty storage never blanks the fields, and storage errors are shown", () =
   assert.equal(empty.elements.effort.value, "low");
   assert.equal(empty.elements.mode.value, "auto");
   assert.equal(empty.elements.showOverlay.checked, true);
-  assert.equal(empty.elements.autoEnter.checked, false);
 
   const failingSave = loadPopup({ stored: {}, failSet: "quota exceeded" });
   failingSave.elements.model.value = "claude-sonnet-5-5";
@@ -233,28 +232,79 @@ test("popup test key only messages the worker when clicked, with the trimmed key
 test("popup shows saved settings immediately from the local mirror, before chrome.storage answers", () => {
   const lsStore = {
     "kch-settings": JSON.stringify({
-      apiKey: "sk-ant-m",
       model: "claude-sonnet-5-5",
       effort: "high",
       mode: "fill",
       autoAdvance: true,
       showOverlay: false,
-      autoEnter: true,
     }),
   };
-  const popup = loadPopup({ stored: {}, deferGet: true, lsStore });
+  const popup = loadPopup({ stored: { apiKey: "sk-ant-m" }, deferGet: true, lsStore });
   // Stored values are visible synchronously, with storage still pending.
-  assert.equal(popup.elements.apiKey.value, "sk-ant-m");
+  // The key is never in the mirror, so it waits for the storage read.
+  assert.equal(popup.elements.apiKey.value, "");
   assert.equal(popup.elements.model.value, "claude-sonnet-5-5");
   assert.equal(popup.elements.effort.value, "high");
   assert.equal(popup.elements.mode.value, "fill");
   assert.equal(popup.elements.autoAdvance.checked, true);
   assert.equal(popup.elements.showOverlay.checked, false);
-  assert.equal(popup.elements.autoEnter.checked, true);
-  // An empty storage answer must not blank the mirrored values.
   popup.flushGet();
   assert.equal(popup.elements.model.value, "claude-sonnet-5-5");
   assert.equal(popup.elements.apiKey.value, "sk-ant-m");
+});
+
+test("a partial storage answer keeps mirrored values instead of resetting them to defaults", () => {
+  const lsStore = {
+    "kch-settings": JSON.stringify({ model: "claude-opus-5-5", effort: "high", mode: "fill", autoAdvance: true, showOverlay: true }),
+  };
+  const popup = loadPopup({ stored: { model: "claude-sonnet-5-5" }, lsStore });
+  assert.equal(popup.elements.model.value, "claude-sonnet-5-5");
+  assert.equal(popup.elements.effort.value, "high");
+  assert.equal(popup.elements.mode.value, "fill");
+  assert.equal(popup.elements.autoAdvance.checked, true);
+});
+
+test("edits made before the storage answer arrives are not overwritten by it", () => {
+  const popup = loadPopup({
+    stored: {},
+    deferGet: true,
+    getSnapshot: { model: "claude-opus-5-5", effort: "low", mode: "auto" },
+  });
+  popup.elements.model.value = "claude-haiku-4-5";
+  popup.change("model");
+  popup.flushGet();
+  assert.equal(popup.elements.model.value, "claude-haiku-4-5");
+  assert.equal(JSON.parse(popup.lsStore["kch-settings"]).model, "claude-haiku-4-5");
+});
+
+test("an unknown stored select value falls back to the default instead of blanking", () => {
+  const selectOptions = {
+    model: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"],
+    effort: ["low", "medium", "high"],
+    mode: ["auto", "fill", "suggest"],
+  };
+  const popup = loadPopup({ stored: { model: "claude-fable-5-1", mode: "bogus" }, selectOptions });
+  assert.equal(popup.elements.model.value, "claude-opus-5-5");
+  assert.equal(popup.elements.mode.value, "auto");
+  popup.click("save");
+  assert.equal(popup.store.model, "claude-opus-5-5");
+  assert.equal(popup.store.mode, "auto");
+});
+
+test("the API key is never written to the localStorage mirror", () => {
+  const popup = loadPopup({ stored: {} });
+  popup.elements.apiKey.value = "sk-ant-secret";
+  popup.input("apiKey");
+  assert.equal(popup.store.apiKey, "sk-ant-secret");
+  assert.equal("apiKey" in JSON.parse(popup.lsStore["kch-settings"]), false);
+  // A mirror written by an older version that contains the key is
+  // not read back, and is rewritten without it.
+  const lsStore = { "kch-settings": JSON.stringify({ apiKey: "sk-ant-old", model: "claude-sonnet-5-5" }) };
+  const second = loadPopup({ stored: { apiKey: "sk-ant-new" }, lsStore });
+  assert.equal(second.elements.apiKey.value, "sk-ant-new");
+  second.elements.effort.value = "high";
+  second.change("effort");
+  assert.equal("apiKey" in JSON.parse(second.lsStore["kch-settings"]), false);
 });
 
 test("persist writes the local mirror as well as chrome.storage.local", () => {
@@ -263,9 +313,9 @@ test("persist writes the local mirror as well as chrome.storage.local", () => {
   popup.change("model");
   assert.equal(popup.store.model, "claude-haiku-4-5");
   assert.equal(JSON.parse(popup.lsStore["kch-settings"]).model, "claude-haiku-4-5");
-  popup.elements.autoEnter.checked = true;
-  popup.change("autoEnter");
-  assert.equal(JSON.parse(popup.lsStore["kch-settings"]).autoEnter, true);
+  popup.elements.showOverlay.checked = false;
+  popup.change("showOverlay");
+  assert.equal(JSON.parse(popup.lsStore["kch-settings"]).showOverlay, false);
 });
 
 test("a stale mirror is corrected by chrome.storage values, and a corrupt mirror is ignored", () => {

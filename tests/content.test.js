@@ -1,0 +1,506 @@
+// Committed tests for content.js: the real content.js + humanize.js
+// run in a vm against a fake rated-party DOM, adapted from the
+// scratch probe that used to live only in /tmp. Each scenario drives
+// the DOM the way the game does and asserts what was typed,
+// submitted, and refetched.
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+class Ev {
+  constructor(type, init = {}) {
+    this.type = type;
+    this.bubbles = !!init.bubbles;
+    this.cancelable = !!init.cancelable;
+  }
+  preventDefault() {}
+}
+class InputEv extends Ev {
+  constructor(type, init = {}) {
+    super(type, init);
+    this.data = init.data !== undefined ? init.data : null;
+    this.inputType = init.inputType || "";
+  }
+}
+class KeyEv extends Ev {
+  constructor(type, init = {}) {
+    super(type, init);
+    this.key = init.key || "";
+    this.code = init.code || "";
+  }
+}
+
+function compoundMatches(el, compound) {
+  const tagM = compound.match(/^[a-zA-Z][a-zA-Z0-9-]*/);
+  let rest = compound;
+  if (tagM && !compound.startsWith(".")) {
+    if (el.tagName.toLowerCase() !== tagM[0].toLowerCase()) return false;
+    rest = compound.slice(tagM[0].length);
+  }
+  const nots = [];
+  rest = rest.replace(/:not\(\.([a-zA-Z0-9_-]+)\)/g, (_, c) => {
+    nots.push(c);
+    return "";
+  });
+  const classes = [...rest.matchAll(/\.([a-zA-Z0-9_-]+)/g)].map((m) => m[1]);
+  for (const c of classes) if (!el.classList.contains(c)) return false;
+  for (const c of nots) if (el.classList.contains(c)) return false;
+  return true;
+}
+function selectorMatches(el, selector) {
+  const parts = selector.trim().split(/\s+/);
+  let cur = el;
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    let found = false;
+    while (cur) {
+      if (compoundMatches(cur, parts[i])) {
+        found = true;
+        cur = cur.parent;
+        break;
+      }
+      cur = cur.parent;
+    }
+    if (!found) return false;
+  }
+  return true;
+}
+
+class El {
+  constructor(tag) {
+    this.tagName = tag.toUpperCase();
+    this.children = [];
+    this.parent = null;
+    this._classes = new Set();
+    this.classList = {
+      add: (...cs) => cs.forEach((c) => this._classes.add(c)),
+      remove: (...cs) => cs.forEach((c) => this._classes.delete(c)),
+      toggle: (c, force) => {
+        if (force === undefined) force = !this._classes.has(c);
+        if (force) this._classes.add(c);
+        else this._classes.delete(c);
+      },
+      contains: (c) => this._classes.has(c),
+    };
+    this.dataset = {};
+    this.style = {};
+    this.attributes = {};
+    this._text = "";
+    this.disabled = false;
+    this.maxLength = -1;
+    this.events = [];
+    this.listeners = {};
+    this._doc = null;
+  }
+  get textContent() {
+    if (this.children.length) return this.children.map((c) => c.textContent).join("");
+    return this._text;
+  }
+  set textContent(v) {
+    this.children = [];
+    this._text = String(v);
+  }
+  get innerHTML() {
+    return "";
+  }
+  set innerHTML(v) {
+    this.children = [];
+    this._text = "";
+    if (String(v).includes("kch-mode")) {
+      const head = new El("div");
+      head.classList.add("kch-head");
+      const mode = new El("span");
+      mode.classList.add("kch-mode");
+      const hint = new El("span");
+      hint.classList.add("kch-hint");
+      head.appendChild(mode);
+      head.appendChild(hint);
+      const status = new El("div");
+      status.classList.add("kch-status");
+      const list = new El("ol");
+      list.classList.add("kch-list");
+      this.appendChild(head);
+      this.appendChild(status);
+      this.appendChild(list);
+    }
+  }
+  appendChild(child) {
+    child.parent = this;
+    this.children.push(child);
+    return child;
+  }
+  remove() {
+    if (this.parent) {
+      this.parent.children = this.parent.children.filter((c) => c !== this);
+      this.parent = null;
+    }
+  }
+  setAttribute(k, v) {
+    this.attributes[k] = String(v);
+  }
+  getAttribute(k) {
+    return k in this.attributes ? this.attributes[k] : null;
+  }
+  addEventListener(type, fn) {
+    (this.listeners[type] ||= []).push(fn);
+  }
+  dispatchEvent(ev) {
+    ev.target = this;
+    this.events.push(ev);
+    // Document listeners run first when bubbling, approximating
+    // capture: the content script's Enter listener is on document.
+    if (ev.bubbles && this._doc) {
+      for (const fn of this._doc._listeners[ev.type] || []) fn(ev);
+    }
+    for (const fn of this.listeners[ev.type] || []) fn(ev);
+    return true;
+  }
+  click() {
+    this._clicked = (this._clicked || 0) + 1;
+    this.dispatchEvent(new Ev("click", { bubbles: true }));
+  }
+  focus() {
+    if (this._doc) this._doc.activeElement = this;
+  }
+  querySelector(sel) {
+    return this.querySelectorAll(sel)[0] || null;
+  }
+  querySelectorAll(sel) {
+    const out = [];
+    const walk = (el) => {
+      for (const c of el.children) {
+        if (selectorMatches(c, sel)) out.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return out;
+  }
+  closest(sel) {
+    let cur = this;
+    while (cur) {
+      if (compoundMatches(cur, sel.split(/\s+/).pop())) return cur;
+      cur = cur.parent;
+    }
+    return null;
+  }
+}
+
+class InputEl extends El {
+  constructor() {
+    super("input");
+    this._v = "";
+    this.maxLength = 60;
+  }
+}
+// The React native-setter path content.js reads at load time.
+Object.defineProperty(InputEl.prototype, "value", {
+  get() {
+    return this._v;
+  },
+  set(v) {
+    this._v = String(v);
+  },
+  configurable: true,
+});
+
+function buildDoc({ rated, myTurn, prompt, category, initialBubbles }) {
+  const docEl = new El("html");
+  const body = new El("body");
+  docEl.appendChild(body);
+  const doc = {
+    documentElement: docEl,
+    body,
+    activeElement: body,
+    _listeners: {},
+    addEventListener(type, fn) {
+      (this._listeners[type] ||= []).push(fn);
+    },
+    createElement(tag) {
+      const el = tag === "input" ? new InputEl() : new El(tag);
+      el._doc = doc;
+      return el;
+    },
+    querySelector(sel) {
+      return docEl.querySelector(sel);
+    },
+    querySelectorAll(sel) {
+      return docEl.querySelectorAll(sel);
+    },
+    contains(node) {
+      let cur = node;
+      while (cur) {
+        if (cur === docEl) return true;
+        cur = cur.parent;
+      }
+      return false;
+    },
+  };
+  const root = new El("div");
+  root.classList.add("pf-root");
+  root.dataset.phase = "answering";
+  body.appendChild(root);
+  const pod = new El("div");
+  pod.classList.add("pf-room-privacy");
+  pod.setAttribute("aria-label", rated ? "Rated 1V1 table ABCD" : "Unrated 1V1 table ABCD");
+  const podLabel = new El("div");
+  podLabel.classList.add("label");
+  podLabel.textContent = rated ? "RATED 1V1" : "UNRATED 1V1";
+  pod.appendChild(podLabel);
+  root.appendChild(pod);
+  const status = new El("div");
+  status.classList.add("pf-status");
+  status.textContent = myTurn ? "▸ your puffer · type an answer" : "▸ KRILL is up";
+  root.appendChild(status);
+  const card = new El("div");
+  card.classList.add("ds-card");
+  const rnd = new El("div");
+  rnd.classList.add("rnd");
+  rnd.textContent = category;
+  const promptEl = new El("div");
+  promptEl.classList.add("prompt");
+  promptEl.textContent = prompt;
+  card.appendChild(rnd);
+  card.appendChild(promptEl);
+  root.appendChild(card);
+  const dock = new El("div");
+  dock.classList.add("ds-dock");
+  const input = new InputEl();
+  input._doc = doc;
+  input.classList.add("ds-input");
+  input.setAttribute("placeholder", myTurn ? "your puffer — type!" : "KRILL is up…");
+  input.disabled = !myTurn;
+  dock.appendChild(input);
+  const button = new El("button");
+  button.classList.add("ds-dive-btn");
+  button.setAttribute("aria-label", "Send answer");
+  button.textContent = "SEND";
+  dock.appendChild(button);
+  root.appendChild(dock);
+  for (const bub of initialBubbles || []) {
+    const el = doc.createElement("div");
+    el.classList.add("pf-say", "on", bub.cls);
+    el.textContent = bub.text;
+    root.appendChild(el);
+  }
+  return { doc, root, status, card, rnd, promptEl, dock, input, button };
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(fn, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fn()) return;
+    await sleep(25);
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
+function setup({ mode = "auto", responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
+  const { doc, root, status, rnd, promptEl, input, button } = buildDoc({
+    rated: true,
+    myTurn: true,
+    prompt,
+    category,
+    initialBubbles,
+  });
+  const location = { pathname: "/party/ABCD" };
+  // The content script's 300ms tick interval would keep the test
+  // process alive forever if left running; record it for teardown.
+  const intervals = [];
+  const store = { mode, autoAdvance: false, showOverlay: true };
+  const calls = [];
+  const submittedTexts = [];
+  let submits = 0;
+  const onGameSubmit = () => {
+    submits += 1;
+    const liveNode = doc.querySelector(".pf-root .ds-dock .ds-input");
+    if (liveNode) submittedTexts.push(liveNode.value);
+    if (rejectFirst && submits <= rejectFirst && liveNode) {
+      let rejEl = doc.querySelector(".ds-reject");
+      if (!rejEl) {
+        rejEl = doc.createElement("div");
+        rejEl.classList.add("ds-reject");
+        root.appendChild(rejEl);
+      }
+      rejEl.textContent = `“${liveNode.value}”: already said`;
+    }
+    if (retainDraft) return;
+    if (liveNode) liveNode._v = "";
+  };
+  button.addEventListener("click", onGameSubmit);
+  input.addEventListener("keydown", (e) => {
+    // The game only sees trusted Enter; the extension's synthetic
+    // Enter keydown does not reach this callback.
+    if (e.key === "Enter" && e.isTrusted) onGameSubmit();
+  });
+  let changeListener = null;
+  const chromeStub = {
+    storage: {
+      local: {
+        get: (keys, cb) => {
+          if (Array.isArray(keys)) {
+            const out = {};
+            for (const k of keys) if (k in store) out[k] = store[k];
+            cb(out);
+          } else {
+            cb({ ...store });
+          }
+        },
+        set: (obj, cb) => {
+          Object.assign(store, obj);
+          if (cb) cb();
+        },
+      },
+      onChanged: { addListener: (fn) => { changeListener = fn; } },
+    },
+    runtime: {
+      lastError: undefined,
+      sendMessage: (msg, cb) => {
+        calls.push(msg);
+        const res = responder(msg, calls.length, location);
+        setTimeout(() => cb(res), 0);
+      },
+    },
+  };
+  const ctx = vm.createContext({
+    console,
+    document: doc,
+    location,
+    navigator: {},
+    MutationObserver: class {
+      observe() {}
+    },
+    requestAnimationFrame: (fn) => setTimeout(fn, 0),
+    setTimeout,
+    clearTimeout,
+    setInterval: (fn, ms, ...args) => {
+      const id = setInterval(fn, ms, ...args);
+      intervals.push(id);
+      return id;
+    },
+    clearInterval,
+    Event: Ev,
+    InputEvent: InputEv,
+    KeyboardEvent: KeyEv,
+    HTMLInputElement: InputEl,
+    Math,
+    Promise,
+    chrome: chromeStub,
+  });
+  const humanize = fs.readFileSync(path.join(__dirname, "..", "humanize.js"), "utf8");
+  const content = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  vm.runInContext(humanize, ctx);
+  vm.runInContext(content, ctx);
+  const setMyTurn = (mine) => {
+    input.disabled = !mine;
+    input.setAttribute("placeholder", mine ? "your puffer — type!" : "KRILL is up…");
+    status.textContent = mine ? "▸ your puffer · type an answer" : "▸ KRILL is up";
+  };
+  const setPrompt = (text, cat) => {
+    promptEl.textContent = text;
+    rnd.textContent = cat;
+  };
+  return {
+    doc, root, status, input, button, location, store, calls, submittedTexts,
+    get submits() {
+      return submits;
+    },
+    get clicks() {
+      return button._clicked || 0;
+    },
+    fireChange: (changes) => changeListener && changeListener(changes, "local"),
+    setMyTurn, setPrompt,
+    teardown() {
+      for (const id of intervals) clearInterval(id);
+    },
+  };
+}
+
+function sectionResponder(rare, common) {
+  return () => ({ ok: true, rare: [...rare], common: [...common] });
+}
+
+test("a mode change during the Enter delay cancels the pending auto-Enter", async (t) => {
+  const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.input.value === "ab", 4000, "ab typed");
+  g.fireChange({ mode: { oldValue: "auto", newValue: "fill" } });
+  await sleep(1500);
+  assert.equal(g.clicks, 0);
+  assert.equal(g.submits, 0);
+  assert.equal(g.input.value, "ab");
+});
+
+test("a timed-out wrong answer is deleted from the box when the turn passes", async (t) => {
+  const g = setup({
+    responder: (msg) =>
+      msg.prompt.includes("second")
+        ? { ok: true, rare: ["xy", "zw"], common: ["qq", "rr"] }
+        : { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] },
+    retainDraft: true,
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submits >= 1, 5000, "first submit");
+  assert.equal(g.input.value, "ab");
+  g.setMyTurn(false);
+  await sleep(800);
+  assert.equal(g.input.value, "", "leftover must be deleted at turn end");
+  g.setPrompt("Name a second dish", "CATEGORY 4");
+  g.setMyTurn(true);
+  await waitFor(() => g.input.value === "xy", 5000, "second-category answer typed");
+  await waitFor(() => g.submittedTexts.includes("xy"), 5000, "second-category answer submitted");
+});
+
+test("one rejection jumps to common, and the next turn starts from rare again", async (t) => {
+  const g = setup({
+    responder: sectionResponder(["ra", "rb", "rc"], ["ca", "cb", "cc"]),
+    rejectFirst: 1,
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.length >= 2, 9000, "two submits");
+  assert.deepEqual(g.submittedTexts.slice(0, 2), ["ra", "ca"]);
+  g.setMyTurn(false);
+  await sleep(700);
+  g.setMyTurn(true);
+  await waitFor(() => g.submittedTexts.includes("rb"), 8000, "rare retried next turn");
+  assert.equal(g.submittedTexts[2], "rb");
+});
+
+test("regeneration is not blocked once the two lists total 60", async (t) => {
+  const rare = Array.from({ length: 30 }, (_, i) => `r${String(i).padStart(2, "0")}`);
+  const common = Array.from({ length: 30 }, (_, i) => `c${String(i).padStart(2, "0")}`);
+  const bubbles = [...rare.slice(1), ...common.slice(1)].map((text) => ({ text, cls: "rest" }));
+  const g = setup({
+    responder: (msg, callNo) =>
+      callNo >= 2
+        ? { ok: true, rare: ["n1", "n2"], common: ["n3", "n4"] }
+        : { ok: true, rare: [...rare], common: [...common] },
+    initialBubbles: bubbles,
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.calls.some((c) => c.kind), 9000, "a refetch with a kind");
+  assert.ok(g.calls.some((c) => c.kind === "both" || c.kind === "rare" || c.kind === "common"));
+});
+
+test("the same category and prompt in a new room resets to the rare list", async (t) => {
+  const g = setup({
+    responder: (_msg, _callNo, location) =>
+      location.pathname.includes("WXYZ")
+        ? { ok: true, rare: ["r1", "r2"], common: ["c1", "c2"] }
+        : { ok: true, rare: ["ra", "rb"], common: ["ca", "cb"] },
+    rejectFirst: 1,
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.length >= 2, 9000, "two submits");
+  assert.deepEqual(g.submittedTexts.slice(0, 2), ["ra", "ca"]);
+  g.setMyTurn(false);
+  await sleep(700);
+  const rej = g.doc.querySelector(".ds-reject");
+  if (rej) rej.remove();
+  g.location.pathname = "/party/WXYZ";
+  g.setMyTurn(true);
+  await waitFor(() => g.submittedTexts.includes("r1"), 8000, "fresh rare list in the new room");
+});

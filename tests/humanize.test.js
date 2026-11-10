@@ -419,10 +419,22 @@ test("canonicalKey maps spelling variants to one key without colliding distinct 
   same("Foetus", "fetus");
   same("Manoeuvre", "maneuver");
   same("7-layer dip", "7-layer dip");
+  same("Sweet Potato", "sweetpotato");
+  same("Crème Brûlée", "creme brulee");
+  same("McDonald's", "McDonalds");
+  same("St. Louis", "St Louis");
+  same("7-layer dip", "7 layer dip");
+  same("Battleship grey", "battleshipgrey");
   different("Llama", "lama");
   different("Tour", "tor");
   different("Surprise", "surprize");
   different("Udon", "Ramen");
+  // Plural forms are distinct keys: marking is by submission event,
+  // not by stemming. (Apples submitted is crossed because it was
+  // submitted, not because it compares equal to apple.)
+  different("Apples", "apple");
+  different("Tomatoes", "tomato");
+  different("Berries", "berry");
 });
 
 test("parseCandidates dedupes spelling variants within and across sections", () => {
@@ -507,4 +519,60 @@ test("parseCandidates enforces the six-word cap and keeps exclusions", () => {
   ]);
   assert.deepEqual(parseCandidates("Udon\nRamen\n", ["udon"]), ["Ramen"]);
   assert.deepEqual(parseCandidates("Udon\nudon\nUDON\n", []), ["Udon"]);
+});
+
+test("typeHumanlike settles done as failed instead of wedging when a step throws", async () => {
+  const { typeHumanlike } = loadHumanize();
+  const timers = [];
+  const clock = {
+    setTimeout(fn, ms) {
+      const id = timers.length;
+      timers.push({ fn, ms, cancelled: false });
+      return id;
+    },
+    clearTimeout(id) {
+      if (timers[id]) timers[id].cancelled = true;
+    },
+  };
+  const steps = [
+    { op: "type", ch: "a", value: "a", delay: 1 },
+    { op: "type", ch: "b", value: "ab", delay: 1 },
+    { op: "type", ch: "c", value: "abc", delay: 1 },
+  ];
+  const applied = [];
+  const run = typeHumanlike(null, "abc", {
+    steps,
+    timers: clock,
+    apply: (value) => {
+      if (value === "ab") throw new Error("setter blew up");
+      applied.push(value);
+    },
+    shouldContinue: () => true,
+  });
+  const runNext = () => {
+    const t = timers.find((x) => !x.cancelled && !x.ran);
+    assert.ok(t, "a timer should be pending");
+    t.ran = true;
+    t.fn();
+  };
+  runNext();
+  assert.deepEqual(applied, ["a"]);
+  runNext();
+  assert.equal(await run.done, false);
+  assert.deepEqual(applied, ["a"]);
+});
+
+test("typos never land on digits or punctuation", () => {
+  const { planTyping, createSeededRng } = loadHumanize();
+  const text = "Ab1: Cd2, Ef3";
+  const chars = [...text];
+  for (let seed = 1; seed <= 500; seed += 1) {
+    const steps = planTyping(text, createSeededRng(seed), { typoProbability: 1 });
+    const backIdx = steps.findIndex((s) => s.op === "backspace");
+    assert.notEqual(backIdx, -1, `seed ${seed} should plan a typo`);
+    const typoStep = steps[backIdx - 1];
+    const pos = typoStep.value.length - 1;
+    assert.match(chars[pos], /[A-Za-z]/, `seed ${seed}: typo landed on ${JSON.stringify(chars[pos])}`);
+    assert.match(typoStep.ch, /[A-Za-z]/, `seed ${seed}: typo char is ${JSON.stringify(typoStep.ch)}`);
+  }
 });

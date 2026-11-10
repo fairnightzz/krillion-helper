@@ -2,18 +2,19 @@
 // Watches the game, asks the background worker for candidate answers as soon as a
 // prompt is visible (during the 3s preview), then fills / submits them in the
 // 25s answer window. Falls through the candidate list on rejections.
-// In rated Puffer Party games it only types, human-like and one keystroke at a
-// time (see humanize.js), and, unless auto-Enter is on, never submits: the
-// player presses Enter.
+// In rated Puffer Party games it types, human-like and one keystroke at a
+// time (see humanize.js), and submits only in Mode "auto"; in Mode
+// "fill" the player presses Enter.
 
 (() => {
   const $ = (sel, root = document) => root.querySelector(sel);
 
+  // Mode drives both games: "auto" fills/types and submits, "fill"
+  // fills/types only (you press Enter), "suggest" shows candidates only.
   const settings = {
     mode: "auto",
     autoAdvance: false,
     showOverlay: true,
-    autoEnter: false, // rated party: press Enter after typing (opt-in)
   };
 
   // Party games keep two lists (see fetchCandidates): rare answers to
@@ -40,6 +41,7 @@
     error: null,
     status: "idle",
     said: new Set(),      // party: answers already played this category (lowercase)
+    saidForms: new Map(), // party: norm -> readable form first seen, for refetch excludes
     copied: null,
     copiedTimer: null,
     partyFetchAt: 0,    // last party candidate fetch, for the refetch cooldown
@@ -54,20 +56,18 @@
     prevBoxText: null, // rated party: text submitted/typed last round; a leftover, not fresh typing
     wasMyTurn: false,     // rated party: holder was me on the previous tick
     turnStartAt: 0,      // rated party: when this turn became mine
-    rejectCount: 0,      // rejections so far in this round (prompt/category)
+    rejectCount: 0,      // rejections so far in this turn of mine
     partyRejectSeen: null, // rated party: last .ds-reject text acted on
     ratedLatched: false,  // this room is a rated (queue) table
     ratedForPath: "",
   };
 
-  // Canonical form for COMPARING answers only: the game autocorrects
-  // spelling variants ("Battleship gray" -> "battleship grey"), so two
-  // spellings of the same answer must compare equal or the extension
-  // retypes it as if new. The text typed and shown stays verbatim.
-  // Rules are deliberately bounded (whole words and word-final
-  // suffixes from small lists) so distinct words do not collide:
-  // "llama" stays distinct from "lama", "tour" from "tor". Keep in
-  // sync with canonicalKey in background.js.
+  // Literal comparison for matching SHOWN forms to list entries:
+  // lowercase, fold accents, drop spaces and punctuation, then the
+  // bounded spelling-variant word rules below (grey, colour, and the
+  // like). The text typed and shown stays verbatim. Submitted entries
+  // are marked used by event (see attemptPartySubmit), not by this
+  // comparison. Keep in sync with canonicalKey in background.js.
   const COLOUR_STEMS = [
     "colour", "favour", "honour", "behaviour", "flavour", "labour",
     "neighbour", "humour", "rumour", "vigour", "ardour", "odour", "savour", "glamour",
@@ -88,7 +88,9 @@
     diarrhoea: "diarrhea", manoeuvre: "maneuver",
   };
   function canonicalWord(w) {
-    if (w === "grey") return "gray";
+    // Compounds such as "battleshipgrey" carry the variant inside the
+    // word; the whole-word spelling rules below would miss them.
+    w = w.replace(/grey/g, "gray");
     if (Object.hasOwn(CLASSICAL_WORDS, w)) return CLASSICAL_WORDS[w];
     for (const stem of COLOUR_STEMS) {
       if (w === stem || (w.startsWith(stem) && COLOUR_SUFFIXES.includes(w.slice(stem.length)))) {
@@ -110,19 +112,74 @@
   const norm = (s) =>
     String(s || "")
       .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/æ/g, "ae")
+      .replace(/œ/g, "oe")
+      .replace(/ß/g, "ss")
+      .replace(/ø/g, "o")
+      .replace(/ł/g, "l")
+      .replace(/đ/g, "d")
+      .replace(/þ/g, "th")
+      .replace(/ð/g, "d")
+      .replace(/ı/g, "i")
       .replace(/[“”"]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .split(" ")
+      .split(/[^a-z0-9]+/)
       .filter(Boolean)
-      .map((token) => token.split("-").map((part) => canonicalWord(part.replace(/[.,;:!?]+$/, ""))).join("-"))
-      .join(" ");
+      .map(canonicalWord)
+      .join("");
 
   // Variant-aware rejection check: "Battleship grey" counts as the
   // rejected "Battleship gray", and vice versa.
   function isRejected(text) {
     const key = norm(text);
     return state.rejected.some((r) => norm(r) === key);
+  }
+
+  // Record a played answer, keeping its readable form: refetch
+  // excludes are sent to the model, so they must be names, not the
+  // compact norms used for equality.
+  function markSaid(text, form) {
+    const key = norm(text);
+    if (!key) return;
+    state.said.add(key);
+    if (form && !state.saidForms.has(key)) state.saidForms.set(key, String(form).trim());
+  }
+  // Names to exclude on a refetch: the original spellings of played
+  // and rejected answers, not compact norms.
+  function excludeNames() {
+    const names = new Set(state.rejected);
+    for (const c of displayList()) {
+      if (state.said.has(norm(c)) || isRejected(c)) names.add(c);
+    }
+    for (const form of state.saidForms.values()) names.add(form);
+    return [...names].slice(-40);
+  }
+
+  // Remember what this extension left in the box when a turn or
+  // round ends, so the next turn can tell that leftover from fresh
+  // player text. Captures the exact box text when it is this
+  // extension's draft — a finished answer, or a prefix of one
+  // still being typed when time ran out. Text matching nothing
+  // this extension was working on is never captured. Returns
+  // whether prevBoxText was (re)set by this call.
+  function captureLeftover() {
+    const input = partyInput();
+    const draft = state.typingFor || state.filledForUser || state.awaitingResult;
+    const box = input ? input.value : "";
+    if (
+      box && draft &&
+      (norm(box) === norm(draft) || draft.startsWith(box) ||
+        box.startsWith(draft) || norm(draft).startsWith(norm(box)))
+    ) {
+      state.prevBoxText = box;
+      return true;
+    }
+    if (state.filledForUser || state.awaitingResult) {
+      state.prevBoxText = state.filledForUser || state.awaitingResult;
+      return true;
+    }
+    return false;
   }
 
   // ---------- overlay ----------
@@ -183,6 +240,13 @@
     return isParty() ? [...state.rare, ...state.common] : state.candidates;
   }
   function render() {
+    // No game surface on this page (homepage, blog, lobby shell):
+    // never create or show the overlay here. It is created only
+    // once a party root, prompt card, or solo dock exists.
+    if (!isParty() && !$(".ds-card") && !$("form.ds-dock")) {
+      if (overlay) overlay.style.display = "none";
+      return;
+    }
     const o = ensureOverlay();
     o.style.display = settings.showOverlay ? "" : "none";
     const party = isParty();
@@ -190,7 +254,7 @@
     const items = displayList();
     const curText = party ? norm(state.typingFor || state.filledForUser || "") : "";
     const sig = [
-      party, rated, settings.showOverlay, settings.mode, settings.autoEnter,
+      party, rated, settings.showOverlay, settings.mode,
       state.status, state.error, state.idx, curText, state.copied,
       items.join("\u0000"), state.rejected.join("\u0000"),
       [...state.said].sort().join("\u0000"),
@@ -200,7 +264,7 @@
     o.classList.toggle("kch-party", party);
     o.classList.toggle("kch-rated", rated);
     $(".kch-mode", o).textContent = rated ? "rated" : party ? "party" : settings.mode;
-    $(".kch-hint", o).textContent = items.length ? (rated ? (settings.autoEnter ? "auto-Enter on" : "typing — press Enter") : "click = copy") : "";
+    $(".kch-hint", o).textContent = items.length ? (rated ? (settings.mode === "auto" ? "auto-Enter on" : "typing — press Enter") : "click = copy") : "";
     const st = $(".kch-status", o);
     st.textContent = state.error ? "error: " + state.error : state.status;
     st.classList.toggle("kch-err", !!state.error);
@@ -326,7 +390,7 @@
     // A pending auto-Enter belongs to the typing just cancelled.
     clearEnterTimer();
   }
-  // Auto-Enter (opt-in): submit by clicking the dock's "Send answer"
+  // Auto-submit in Mode "auto": submit by clicking the dock's "Send answer"
   // button (.ds-dive-btn), the same control the solo dive submits with
   // and the same callback Enter on the input calls. A synthetic Enter
   // keydown did not reach that callback in the live game, so it is only
@@ -360,6 +424,9 @@
     input = live && document.contains(live) ? live : input;
     if (state.roundKey !== key) return blockSubmit("round changed");
     if (!isRatedParty()) return blockSubmit("not a rated table");
+    // Re-checked at fire time, not just at schedule time: the user may
+    // have switched Mode while the Enter timer was pending.
+    if (settings.mode !== "auto") return blockSubmit("mode is not auto");
     if (!isMyTurn(input)) return blockSubmit("not my turn");
     if (!input || !document.contains(input)) return blockSubmit("no input");
     if (norm(input.value) !== norm(candidate)) return blockSubmit("box changed");
@@ -369,10 +436,13 @@
     state.awaitingResult = input.value.trim();
     state.awaitingAt = Date.now();
     setStatus('submitting "' + candidate + '"');
+    let dispatched = false;
+    let usedButton = false;
     if (btn && !btn.disabled) {
       try {
         btn.click();
-        return true;
+        dispatched = true;
+        usedButton = true;
       } catch (_) {
         // Fall through to the Enter keydown below.
       }
@@ -381,7 +451,23 @@
     // fall through to the Enter keydown below. The button's disabled
     // gate is not the Enter handler's gate, so a disabled button must
     // not give up on its own.
-    return dispatchEnterKey(input);
+    if (!dispatched) dispatched = dispatchEnterKey(input);
+    if (dispatched && usedButton) {
+      // Mark the submitted entry crossed at submit time, by event:
+      // it counts as used even if the game shows a different corrected
+      // form. Also record the box text itself, which may already be
+      // the game's corrected spelling.
+      markSaid(candidate, candidate);
+      const boxText = input.value.trim();
+      if (boxText && norm(boxText) !== norm(candidate)) markSaid(boxText, boxText);
+    }
+    // A synthetic Enter keydown is known not to reach the game's
+    // submit callback in some layouts, so dispatching it must not
+    // mark the answer used: if it did submit, the turn passing (or
+    // the rejection banner) records it; if it did not, the box
+    // still holds it for the player to submit by hand. The
+    // attempt latch in submitPartyAnswer still stops re-dispatch.
+    return dispatched;
   }
   function submitPartyAnswer(input, candidate, key) {
     state.enterTimer = null;
@@ -407,6 +493,7 @@
       initialValue: alreadyTyped,
       shouldContinue: (prefix) => {
         if (state.roundKey !== key) return false;
+        if (settings.mode === "suggest") return false;
         if (!isRatedParty() || !isMyTurn(input)) return false;
         if (partyInput() !== input || !document.contains(input)) return false;
         if (input.value !== prefix) return false; // user or game changed the box
@@ -426,7 +513,7 @@
       if (ok && state.roundKey === key) {
         state.typingFor = null;
         state.filledForUser = candidate;
-        if (settings.autoEnter) {
+        if (settings.mode === "auto") {
           setStatus('typed "' + candidate + '" — pressing Enter…');
           clearEnterTimer();
           // Short, jittered pause before Enter, like glancing at the answer.
@@ -465,7 +552,10 @@
         if (exclude && exclude.length) {
           state.rare = state.rare.concat(freshRare);
           state.common = state.common.concat(freshCommon);
-        } else {
+        } else if (freshRare.length || freshCommon.length) {
+          // A replace only installs a non-empty list: an overlapping
+          // stale response whose entries were all filtered as
+          // duplicates of the installed list must not wipe it.
           state.rare = freshRare;
           state.common = freshCommon;
           state.rareIdx = 0;
@@ -483,7 +573,7 @@
         if (exclude && exclude.length) {
           state.rare = state.rare.concat(all.slice(0, split));
           state.common = state.common.concat(all.slice(split));
-        } else {
+        } else if (all.length) {
           state.rare = all.slice(0, split);
           state.common = all.slice(split);
           state.rareIdx = 0;
@@ -496,7 +586,7 @@
       const fresh = res.candidates.filter((x) => !have.has(norm(x)));
       if (exclude && exclude.length) {
         state.candidates = state.candidates.concat(fresh);
-      } else {
+      } else if (fresh.length || !state.candidates.length) {
         state.candidates = fresh;
         state.idx = 0;
       }
@@ -506,14 +596,19 @@
 
   function resetRound(key, prompt) {
     clearTimeout(state.advanceTimer);
+    // Capture the leftover before cancelTyping drops typingFor: a
+    // draft still being typed when the category changed is a
+    // leftover too, and the next round must be able to clear it.
+    // A leftover already saved by the not-my-turn branch is kept
+    // when there is nothing new to capture.
+    captureLeftover();
     cancelTyping();
     // The game keeps the last submitted answer in the box into the next
-    // category. Remember exactly what was typed/submitted, before the
-    // state below is cleared, so the next round can tell that leftover
-    // from text the player is typing fresh. Only text this extension
-    // typed or the player submitted counts: unsubmitted typing is left
-    // alone and still shows "not overwriting".
-    state.prevBoxText = state.filledForUser || state.awaitingResult || null;
+    // category. The captured text above is what lets the next round
+    // tell that leftover from text the player is typing fresh. Only
+    // text this extension typed or the player submitted counts:
+    // unsubmitted typing by the player is left alone and still
+    // shows "not overwriting".
     Object.assign(state, {
       roundKey: key,
       prompt,
@@ -547,6 +642,7 @@
       enterDiag: null,
       enterDiagAt: 0,
       said: new Set(),
+      saidForms: new Map(),
       copied: null,
     });
     fetchCandidates(prompt, []);
@@ -632,7 +728,14 @@
     // answers still count.
     document.querySelectorAll(".pf-say.on:not(.bad):not(.caret)").forEach((el) => {
       const t = norm(el.textContent);
-      if (t && !state.said.has(t)) { state.said.add(t); changed = true; }
+      if (t && !state.said.has(t)) { markSaid(el.textContent, el.textContent); changed = true; }
+    });
+    // Rejected answers ("bad" bubbles) count as tried too, for every
+    // player: typing one again only earns another rejection. Caret
+    // drafts are still excluded above.
+    document.querySelectorAll(".pf-say.on.bad").forEach((el) => {
+      const t = norm(el.textContent);
+      if (t && !state.said.has(t)) { markSaid(el.textContent, el.textContent); changed = true; }
     });
     // Reject banner: “x”: already said  /  “x”: no echo. keep going
     const rej = $(".ds-reject");
@@ -640,7 +743,7 @@
       const m = rej.textContent.match(/[“"](.+?)[”"]/);
       if (m) {
         const t = norm(m[1]);
-        if (!state.said.has(t)) { state.said.add(t); changed = true; }
+        if (!state.said.has(t)) { markSaid(m[1], m[1]); changed = true; }
       }
     }
     if (state.fetching) { if (changed) render(); return; }
@@ -659,8 +762,11 @@
       : rareUsable === 0 ? "rare"
       : commonUsable <= 1 ? "common"
       : usable < 3 ? "both" : null;
-    if (kind && total < 60 && Date.now() - state.partyFetchAt > 5000) {
-      const exclude = Array.from(new Set(displayList().map(norm).concat(Array.from(state.said)))).slice(-40);
+    // The cap bounds memory, not usability: the lists only grow
+    // within a round, so a low cap strands a long category with
+    // "out of candidates" once every entry is said or rejected.
+    if (kind && total < 200 && Date.now() - state.partyFetchAt > 5000) {
+      const exclude = excludeNames();
       fetchCandidates(state.prompt, exclude, kind);
       return;
     }
@@ -668,28 +774,50 @@
   }
 
   // Rated party only; casual party keeps the suggest/copy behaviour above.
-  // Types the rarest unused candidate when it is our turn. Unless
-  // auto-Enter is on, it never submits: Enter is the player's. Mode
-  // "suggest" disables typing; "auto" and "fill" both type only here.
+  // Types the rarest unused candidate when it is our turn, and submits
+  // in Mode "auto". Mode "suggest" disables typing; Mode "fill" types
+  // only, and the player presses Enter.
   function partyRatedTick() {
     if (settings.mode === "suggest") return;
     const input = partyInput();
     const myTurn = isMyTurn(input);
     if (!myTurn) {
-      if (state.wasMyTurn) cancelTyping();
+      if (state.wasMyTurn) {
+        // Time ran out / the turn passed. Remember the leftover
+        // before cancelTyping drops typingFor, then delete this
+        // extension's wrong answer from the box so it cannot carry
+        // into the next turn. Only text captured as this extension's
+        // draft is deleted; anything else in the box is left alone.
+        // The stale-box check on the next turn is the backup if the
+        // game restores the text after this delete.
+        const captured = captureLeftover();
+        cancelTyping();
+        const live = partyInput();
+        if (captured && live && live.value && norm(live.value) === norm(state.prevBoxText)) {
+          fillInput(live, "");
+        }
+      }
       state.wasMyTurn = false;
-      // The box keeps the last typed/submitted answer into the next
-      // turn of this category; remember it before clearing, or the
-      // next turn mistakes that leftover for fresh player text.
-      const last = state.filledForUser || state.awaitingResult;
-      if (last) state.prevBoxText = last;
+      // An attempted answer counts as used even if its bubble was
+      // never scanned (the corrected form may have shown only
+      // briefly, or not at all). The turn passing is the evidence
+      // the attempt was made; a merely typed, never-submitted draft
+      // has no awaitingResult and is not recorded here.
+      if (state.awaitingResult) markSaid(state.awaitingResult, state.awaitingResult);
       state.filledForUser = null;
       state.awaitingResult = null;
       state.enterDiag = null;
       state.enterAttemptedFor = null;
       return;
     }
-    if (!state.wasMyTurn) state.turnStartAt = Date.now();
+    if (!state.wasMyTurn) {
+      state.turnStartAt = Date.now();
+      // A new turn starts from rare again: one rejection jumps this
+      // turn to the common bench, but the next turn gets a fresh
+      // chance at rare. (The rejected answers themselves stay
+      // rejected for the round; only the jump resets.)
+      state.rejectCount = 0;
+    }
     state.wasMyTurn = true;
     // Type with the candidates already in hand even while a refetch is in
     // flight; the refetch only appends. Waiting for it would starve typing
@@ -733,6 +861,11 @@
     // arrived yet (acceptance passes the turn; rejection shows the banner
     // above). Do not retype it into a box the game just cleared.
     if (state.awaitingResult && Date.now() - state.awaitingAt < 5000) return;
+    // Expiry is not a free re-pick of the same answer: the attempt
+    // counts as used (the auto path already records it; the manual
+    // Enter path did not), so the next pick moves on instead of
+    // retyping and resubmitting the same candidate.
+    if (state.awaitingResult) markSaid(state.awaitingResult, state.awaitingResult);
     state.awaitingResult = null;
 
     // The answer this extension typed has become unusable since it was
@@ -762,13 +895,13 @@
     }
 
     const maxLen = input.maxLength > 0 ? input.maxLength : 60;
-    // Pick rarest-first, then the common bench. Jump: after two
-    // rejections in this round, or late in the turn, skip the rest of
+    // Pick rarest-first, then the common bench. Jump: after one
+    // rejection in this turn, or late in the turn, skip the rest of
     // the rare list and go straight to the common bench, where the
     // certain answers are. If the bench is empty too, fall back to
     // whatever usable rare answers remain.
     const elapsed = Date.now() - (state.turnStartAt || Date.now());
-    const jump = state.rejectCount >= 2 || elapsed >= 9000;
+    const jump = state.rejectCount >= 1 || elapsed >= 9000;
     let candidate = jump ? pickFromList("common", state.commonIdx, maxLen) : null;
     if (!candidate) candidate = pickFromList("rare", state.rareIdx, maxLen);
     if (!candidate) candidate = pickFromList("common", state.commonIdx, maxLen);
@@ -783,7 +916,7 @@
       state.filledForUser = candidate;
       // A fresh block reason stays visible instead of being overwritten
       // by this status on the next tick.
-      if (settings.autoEnter && state.enterDiag && Date.now() - state.enterDiagAt < 5000) {
+      if (settings.mode === "auto" && state.enterDiag && Date.now() - state.enterDiagAt < 5000) {
         setStatus(state.enterDiag);
       } else {
         setStatus('typed "' + candidate + '" — press Enter');
@@ -796,7 +929,7 @@
       const attemptKey = state.roundKey + "|" + candidate;
       const blockedRecently = state.enterDiag && Date.now() - state.enterDiagAt < 5000;
       if (
-        settings.autoEnter &&
+        settings.mode === "auto" &&
         state.enterTimer === null &&
         !state.awaitingResult &&
         state.enterAttemptedFor !== attemptKey &&
@@ -852,7 +985,13 @@
     }
     const countEl = $(".ds-prompt-count");
     const count = party ? partyRoundCount() : (countEl ? countEl.textContent.trim() : "");
-    const key = count + "|" + prompt;
+    // The room is part of the identity: the same category number
+    // and prompt in a different room is a new round and must reset
+    // the lists, the rejection count, and the jump to the common
+    // bench. (A replay under the same room code with an identical
+    // first prompt still collides unless a prompt-free gap
+    // intervenes and nulls the round key.)
+    const key = location.pathname + "|" + count + "|" + prompt;
     if (key !== state.roundKey) resetRound(key, prompt);
 
     if (party) {
@@ -875,6 +1014,7 @@
 
     // Autocorrect suggestion: the game already replaced the input value; submit again to confirm.
     const corr = $(".ds-correction-panel");
+    if (!corr) state.lastCorrection = null;
     if (corr) {
       const text = corr.textContent;
       if (state.lastCorrection !== text) {
@@ -893,6 +1033,7 @@
 
     // Rejection: move to the next candidate (or resend on a network blip).
     const rej = $(".ds-reject");
+    if (!rej) state.lastReject = null;
     if (rej) {
       const text = rej.textContent.trim();
       if (state.lastReject !== text) {
@@ -945,18 +1086,31 @@
   }
 
   // ---------- wiring ----------
+  // The content script only ever needs these three settings. Read
+  // exactly those keys: reading everything would load the API key
+  // into this page's content-script context, which the worker's
+  // comment promises never happens.
+  const SETTING_KEYS = ["mode", "autoAdvance", "showOverlay"];
   function loadSettings() {
-    // Read everything and merge in JS instead of relying on the storage
-    // API to apply defaults; a partial store must never blank settings.
-    chrome.storage.local.get(null, (s) => {
-      if (s) Object.assign(settings, s);
+    chrome.storage.local.get(SETTING_KEYS, (s) => {
+      if (s) {
+        for (const k of SETTING_KEYS) if (k in s) settings[k] = s[k];
+      }
       render();
     });
   }
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+    const wasMode = settings.mode;
     for (const k of Object.keys(changes)) {
       if (k in settings) settings[k] = changes[k].newValue;
+    }
+    if (settings.mode !== wasMode) {
+      // A pending auto-Enter must not fire after the user left auto
+      // mode (attemptPartySubmit re-checks mode too); typing in
+      // progress must stop if suggestions-only was chosen.
+      if (settings.mode === "suggest") cancelTyping();
+      else clearEnterTimer();
     }
     render();
   });
