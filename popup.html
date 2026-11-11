@@ -45,7 +45,13 @@
     <option value="suggest">Only show suggestions</option>
   </select>
 
-  <p class="hint">Mode applies to the solo dive and to rated Puffer Party alike: “Fill and submit automatically” types and submits, “Fill the box” types only and you press Enter, “Only show suggestions” shows candidates only. In rated Party the helper types human-like, one keystroke at a time, when it is your turn. Casual party games stay suggest-only.</p>
+  <label for="wordStyle">Word choice</label>
+  <select id="wordStyle">
+    <option value="rare">Rare first, common backup</option>
+    <option value="common">Common only — easier, more likely right</option>
+  </select>
+
+  <p class="hint">Mode applies to the solo dive and to rated Puffer Party alike: “Fill and submit automatically” types and submits, “Fill the box” types only and you press Enter, “Only show suggestions” shows candidates only. In rated Party the helper types human-like, one keystroke at a time, when it is your turn. Casual party games stay suggest-only. Word choice applies to both games: Common only uses the safe bench in party games and all-common answers in the solo dive. Words are always typed in lowercase.</p>
 
   <div class="row"><input id="autoAdvance" type="checkbox"><label for="autoAdvance">Auto-click "descend" after each answer</label></div>
   <div class="row"><input id="showOverlay" type="checkbox"><label for="showOverlay">Show on-page overlay</label></div>

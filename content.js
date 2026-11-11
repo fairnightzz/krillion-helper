@@ -13,6 +13,7 @@
   // fills/types only (you press Enter), "suggest" shows candidates only.
   const settings = {
     mode: "auto",
+    wordStyle: "rare", // rare: rare-first with a common bench; common: common bench only
     autoAdvance: false,
     showOverlay: true,
   };
@@ -236,9 +237,13 @@
   // when everything the overlay shows is unchanged.
   let lastRenderSig = null;
   // Party overlay list: rare list, then the common bench. Solo shows
-  // the single candidate list.
+  // the single candidate list. Common-only play shows and uses the
+  // bench alone, even if rare answers are still stored.
   function displayList() {
-    return isParty() ? [...state.rare, ...state.common] : state.candidates;
+    if (isParty()) {
+      return settings.wordStyle === "common" ? [...state.common] : [...state.rare, ...state.common];
+    }
+    return state.candidates;
   }
   function render() {
     // No game surface on this page (homepage, blog, lobby shell):
@@ -622,12 +627,15 @@
   // first fetch of a round, 'rare' or 'common' when regenerating one
   // list that ran out. Solo ignores kind and uses one list.
   function fetchCandidates(prompt, exclude, kind) {
+    // Common-only play never asks for rare answers, whatever list
+    // the caller asked to regenerate.
+    if (isParty() && settings.wordStyle === "common") kind = "common";
     if (isParty()) state.partyFetchAt = Date.now();
     state.fetching = true;
     state.error = null;
     setStatus(exclude && exclude.length ? "fetching more…" : "thinking…");
     const key = state.roundKey;
-    chrome.runtime.sendMessage({ type: "getAnswers", prompt, exclude, party: isParty(), kind: kind || null }, (res) => {
+    chrome.runtime.sendMessage({ type: "getAnswers", prompt, exclude, party: isParty(), kind: kind || null, wordStyle: settings.wordStyle }, (res) => {
       if (state.roundKey !== key) return; // round moved on
       state.fetching = false;
       if (chrome.runtime.lastError || !res || !res.ok) {
@@ -849,7 +857,9 @@
     const total = displayList().length;
     const rareUsable = usableIn(state.rare);
     const commonUsable = usableIn(state.common);
-    const kind = rareUsable === 0 && commonUsable === 0 ? "both"
+    const kind = settings.wordStyle === "common"
+      ? (usable < 3 ? "common" : null)
+      : rareUsable === 0 && commonUsable === 0 ? "both"
       : rareUsable === 0 ? "rare"
       : commonUsable <= 1 ? "common"
       : usable < 3 ? "both" : null;
@@ -992,12 +1002,22 @@
     // rejection in this turn, or late in the turn, skip the rest of
     // the rare list and go straight to the common bench, where the
     // certain answers are. If the bench is empty too, fall back to
-    // whatever usable rare answers remain.
+    // whatever usable rare answers remain. Common-only play picks
+    // from the bench alone.
     const elapsed = Date.now() - (state.turnStartAt || Date.now());
     const jump = state.rejectCount >= 1 || elapsed >= 9000;
-    let candidate = jump ? pickFromList("common", state.commonIdx, maxLen) : null;
-    if (!candidate) candidate = pickFromList("rare", state.rareIdx, maxLen);
-    if (!candidate) candidate = pickFromList("common", state.commonIdx, maxLen);
+    let candidate;
+    if (settings.wordStyle === "common") {
+      candidate = pickFromList("common", state.commonIdx, maxLen);
+    } else {
+      candidate = jump ? pickFromList("common", state.commonIdx, maxLen) : null;
+      if (!candidate) candidate = pickFromList("rare", state.rareIdx, maxLen);
+      if (!candidate) candidate = pickFromList("common", state.commonIdx, maxLen);
+    }
+    // Always type lowercase: no Shift keys, and the game's matching
+    // is case-insensitive. The stored list keeps its spelling for
+    // display and for readable refetch excludes.
+    if (candidate) candidate = candidate.toLowerCase();
     if (!candidate) {
       setStatus("out of candidates");
       return;
@@ -1175,7 +1195,9 @@
 
     if (settings.mode === "fill") {
       if (state.filledForUser !== candidate) {
-        fillInput(input, candidate);
+        // Always type lowercase; the stored candidate keeps its
+        // spelling for rejection tracking and refetch excludes.
+        fillInput(input, candidate.toLowerCase());
         state.filledForUser = candidate;
         state.lastSubmitted = candidate; // so a rejection advances the list
         state.submittedAt = Date.now() + 1e9; // never auto-timeout in fill mode
@@ -1185,7 +1207,7 @@
     }
 
     // auto mode
-    fillInput(input, candidate);
+    fillInput(input, candidate.toLowerCase());
     state.lastSubmitted = candidate;
     state.submittedAt = Date.now();
     setStatus('submitting "' + candidate + '"');
@@ -1197,7 +1219,7 @@
   // exactly those keys: reading everything would load the API key
   // into this page's content-script context, which the worker's
   // comment promises never happens.
-  const SETTING_KEYS = ["mode", "autoAdvance", "showOverlay"];
+  const SETTING_KEYS = ["mode", "wordStyle", "autoAdvance", "showOverlay"];
   function loadSettings() {
     chrome.storage.local.get(SETTING_KEYS, (s) => {
       if (s) {

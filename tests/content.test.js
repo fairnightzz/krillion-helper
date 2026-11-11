@@ -298,7 +298,7 @@ async function waitFor(fn, timeoutMs, label) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-function setup({ mode = "auto", responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
+function setup({ mode = "auto", wordStyle = "rare", responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
   const { doc, root, status, rnd, promptEl, input, button } = buildDoc({
     rated: true,
     myTurn: true,
@@ -310,7 +310,7 @@ function setup({ mode = "auto", responder, rejectFirst = 0, retainDraft = false,
   // The content script's 300ms tick interval would keep the test
   // process alive forever if left running; record it for teardown.
   const intervals = [];
-  const store = { mode, autoAdvance: false, showOverlay: true };
+  const store = { mode, wordStyle, autoAdvance: false, showOverlay: true };
   const calls = [];
   const submittedTexts = [];
   let submits = 0;
@@ -552,4 +552,153 @@ test("the same category and prompt in a new room resets to the rare list", async
   g.location.pathname = "/party/WXYZ";
   g.setMyTurn(true);
   await waitFor(() => g.submittedTexts.includes("r1"), 8000, "fresh rare list in the new room");
+});
+
+test("common-only types from the common bench and never the rare list", async (t) => {
+  const g = setup({ wordStyle: "common", responder: sectionResponder(["ra", "rb"], ["ca", "cb"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.calls.length >= 1, 4000, "first fetch");
+  assert.equal(g.calls[0].kind, "common");
+  assert.equal(g.calls[0].wordStyle, "common");
+  await waitFor(() => g.submittedTexts.length >= 2, 9000, "two common submits");
+  assert.deepEqual(g.submittedTexts.slice(0, 2), ["ca", "cb"]);
+});
+
+test("party typing is always lowercase, whatever the list spelling", async (t) => {
+  const g = setup({ responder: sectionResponder(["Battleship Gray", "Cd"], ["Ef", "Gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.length >= 1, 8000, "lowercase submit");
+  assert.equal(g.submittedTexts[0], "battleship gray");
+});
+
+function setupSolo({ candidates }) {
+  const docEl = new El("html");
+  const body = new El("body");
+  docEl.appendChild(body);
+  const doc = {
+    documentElement: docEl,
+    body,
+    activeElement: body,
+    _listeners: {},
+    addEventListener(type, fn) {
+      (this._listeners[type] ||= []).push(fn);
+    },
+    createElement(tag) {
+      const el = tag === "input" ? new InputEl() : new El(tag);
+      el._doc = doc;
+      return el;
+    },
+    querySelector(sel) {
+      return docEl.querySelector(sel);
+    },
+    querySelectorAll(sel) {
+      return docEl.querySelectorAll(sel);
+    },
+    contains(node) {
+      let cur = node;
+      while (cur) {
+        if (cur === docEl) return true;
+        cur = cur.parent;
+      }
+      return false;
+    },
+  };
+  const card = new El("div");
+  card.classList.add("ds-card");
+  const promptEl = new El("div");
+  promptEl.classList.add("prompt");
+  promptEl.textContent = "Name a noodle dish";
+  card.appendChild(promptEl);
+  body.appendChild(card);
+  const form = new El("form");
+  form.classList.add("ds-dock");
+  const input = new InputEl();
+  input._doc = doc;
+  input.classList.add("ds-input");
+  const button = new El("button");
+  button.classList.add("ds-dive-btn");
+  button.textContent = "SEND";
+  form.appendChild(input);
+  form.appendChild(button);
+  body.appendChild(form);
+  const submitted = [];
+  button.addEventListener("click", () => {
+    submitted.push(input.value);
+    input._v = "";
+  });
+  const intervals = [];
+  const store = { mode: "auto", wordStyle: "rare", autoAdvance: false, showOverlay: true };
+  const chromeStub = {
+    storage: {
+      local: {
+        get: (keys, cb) => {
+          if (Array.isArray(keys)) {
+            const out = {};
+            for (const k of keys) if (k in store) out[k] = store[k];
+            cb(out);
+          } else {
+            cb({ ...store });
+          }
+        },
+        set: (obj, cb) => {
+          Object.assign(store, obj);
+          if (cb) cb();
+        },
+      },
+      onChanged: { addListener() {} },
+    },
+    runtime: {
+      lastError: undefined,
+      sendMessage: (_msg, cb) => {
+        setTimeout(() => cb({ ok: true, candidates: [...candidates] }), 0);
+      },
+    },
+  };
+  const ctx = vm.createContext({
+    console,
+    document: doc,
+    location: { pathname: "/dive" },
+    navigator: {},
+    MutationObserver: class {
+      observe() {}
+    },
+    requestAnimationFrame: (fn) => setTimeout(fn, 0),
+    setTimeout,
+    clearTimeout,
+    setInterval: (fn, ms, ...args) => {
+      const id = setInterval(fn, ms, ...args);
+      intervals.push(id);
+      return id;
+    },
+    clearInterval,
+    Event: Ev,
+    InputEvent: InputEv,
+    KeyboardEvent: KeyEv,
+    HTMLInputElement: InputEl,
+    Math,
+    Promise,
+    chrome: chromeStub,
+  });
+  const humanize = fs.readFileSync(path.join(__dirname, "..", "humanize.js"), "utf8");
+  const content = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  vm.runInContext(humanize, ctx);
+  vm.runInContext(content, ctx);
+  return {
+    input,
+    submitted,
+    get clicks() {
+      return button._clicked || 0;
+    },
+    teardown() {
+      for (const id of intervals) clearInterval(id);
+    },
+  };
+}
+
+test("solo filling is always lowercase, whatever the list spelling", async (t) => {
+  const g = setupSolo({ candidates: ["Udon", "Ramen"] });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submitted.length >= 1, 5000, "solo submit");
+  assert.equal(g.submitted[0], "udon");
+  assert.equal(g.clicks, 1);
 });

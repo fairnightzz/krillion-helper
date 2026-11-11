@@ -17,6 +17,7 @@ Chrome extension that suggests and fills answers on krillion.io using your own A
 | Model | Opus 5.5 | Sonnet 5.5 / Haiku 4.5 are faster and cheaper. |
 | Effort | low | Higher effort is slower. The answer window is 25 s. |
 | Mode | auto | One control for solo and party: auto (fill + submit) / fill (you press Enter) / suggest (overlay only). |
+| Word choice | Rare first | Rare first with a common bench, or Common only (safe bench / all-common answers). Words are always typed in lowercase. |
 | Auto-click descend | off | Clicks DESCEND about 2.5 s after each result. |
 | Overlay | on | Status and candidates panel, bottom-left. |
 

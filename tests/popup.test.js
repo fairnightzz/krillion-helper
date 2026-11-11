@@ -144,6 +144,7 @@ test("popup save writes every field through storage.local.set", () => {
   popup.elements.model.value = "claude-haiku-4-5";
   popup.elements.effort.value = "high";
   popup.elements.mode.value = "fill";
+  popup.elements.wordStyle.value = "common";
   popup.elements.autoAdvance.checked = true;
   popup.elements.showOverlay.checked = false;
   popup.click("save");
@@ -155,6 +156,7 @@ test("popup save writes every field through storage.local.set", () => {
       model: "claude-haiku-4-5",
       effort: "high",
       mode: "fill",
+      wordStyle: "common",
       autoAdvance: true,
       showOverlay: false,
     },
@@ -282,13 +284,16 @@ test("an unknown stored select value falls back to the default instead of blanki
     model: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"],
     effort: ["low", "medium", "high"],
     mode: ["auto", "fill", "suggest"],
+    wordStyle: ["rare", "common"],
   };
-  const popup = loadPopup({ stored: { model: "claude-fable-5-1", mode: "bogus" }, selectOptions });
+  const popup = loadPopup({ stored: { model: "claude-fable-5-1", mode: "bogus", wordStyle: "bogus" }, selectOptions });
   assert.equal(popup.elements.model.value, "claude-opus-5-5");
   assert.equal(popup.elements.mode.value, "auto");
+  assert.equal(popup.elements.wordStyle.value, "rare");
   popup.click("save");
   assert.equal(popup.store.model, "claude-opus-5-5");
   assert.equal(popup.store.mode, "auto");
+  assert.equal(popup.store.wordStyle, "rare");
 });
 
 test("the API key is never written to the localStorage mirror", () => {

@@ -26,6 +26,7 @@ const DEFAULTS = {
   model: "claude-opus-5-5",
   effort: "low",
   mode: "auto",        // auto | fill | suggest
+  wordStyle: "rare",     // rare | common: rare-first with a common bench, or common only
   autoAdvance: false,
   showOverlay: true,
   candidateCount: 8,
@@ -84,10 +85,13 @@ async function getSettings() {
   return { ...DEFAULTS, ...stored };
 }
 
-function buildUserMessage(prompt, exclude, party, kind, count) {
+function buildUserMessage(prompt, exclude, party, kind, count, wordStyle) {
+  const commonOnly = wordStyle === "common";
   if (!party) {
     const soloCount = count == null ? DEFAULTS.candidateCount : count;
-    let text = `Game prompt: "${prompt}"\n\nGive ${soloCount} candidate answers, rarest first (last 2 are safe fallbacks).`;
+    let text = commonOnly
+      ? `Game prompt: "${prompt}"\n\nGive ${soloCount} COMMON candidate answers — moderately uncommon answers certain to be accepted, rarest first among them. Do not include rare or obscure answers.`
+      : `Game prompt: "${prompt}"\n\nGive ${soloCount} candidate answers, rarest first (last 2 are safe fallbacks).`;
     if (exclude && exclude.length) {
       text += `\n\nThese were already REJECTED by the game as not in the answer set, do not repeat them and avoid anything similarly obscure:\n`;
       text += exclude.map((e) => `- ${e}`).join("\n");
@@ -97,9 +101,12 @@ function buildUserMessage(prompt, exclude, party, kind, count) {
   // Party games get two lists: rare answers to chase depth, and a
   // separate common bench (a duel most of all runs many turns per
   // category, so one or two safe answers are not enough). Each list
-  // regenerates on its own when it runs out.
+  // regenerates on its own when it runs out. Common-only play asks
+  // for the bench alone, whatever list was requested.
   let text;
-  if (kind === "rare") {
+  if (commonOnly) {
+    text = `Game prompt: "${prompt}"\n\nGive 10 COMMON candidate answers — moderately uncommon answers certain to be accepted, rarest first among them. Output them under a "COMMON:" heading, one per line, and nothing else in that section.`;
+  } else if (kind === "rare") {
     text = `Game prompt: "${prompt}"\n\nGive 12 RARE candidate answers, rarest first. Output them under a "RARE:" heading, one per line, and nothing else in that section.`;
   } else if (kind === "common") {
     text = `Game prompt: "${prompt}"\n\nGive 10 COMMON candidate answers — moderately uncommon answers certain to be accepted, rarest first among them. Output them under a "COMMON:" heading, one per line, and nothing else in that section.`;
@@ -332,19 +339,20 @@ function parseCandidates(text, exclude) {
   return [...rare, ...common];
 }
 
-async function callApi({ prompt, exclude, party, kind }, settings, useFallbacks) {
+async function callApi({ prompt, exclude, party, kind, wordStyle }, settings, useFallbacks) {
   const headers = {
     "content-type": "application/json",
     "x-api-key": settings.apiKey,
     "anthropic-version": "2023-06-01",
     "anthropic-dangerous-direct-browser-access": "true",
   };
-  const count = party ? (kind === "rare" ? 12 : kind === "common" ? 10 : 22) : settings.candidateCount;
+  const commonOnly = wordStyle === "common";
+  const count = party ? (commonOnly ? 10 : kind === "rare" ? 12 : kind === "common" ? 10 : 22) : settings.candidateCount;
   const body = {
     model: settings.model,
     max_tokens: 4000,
     system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildUserMessage(prompt, exclude, party, kind, count) }],
+    messages: [{ role: "user", content: buildUserMessage(prompt, exclude, party, kind, count, wordStyle) }],
   };
   if (supportsEffort(settings.model)) {
     body.output_config = { effort: settings.effort || "low" };
@@ -417,16 +425,22 @@ async function getAnswers(req) {
     .map((b) => b.text)
     .join("\n");
   if (req.party) {
-    const kind = req.kind === "rare" || req.kind === "common" ? req.kind : "both";
+    const commonOnly = req.wordStyle === "common";
+    const kind = commonOnly ? "common" : req.kind === "rare" || req.kind === "common" ? req.kind : "both";
     const sections = parseSections(text, req.exclude, {
       // The fallback split must match the request: 12 rare + 10
       // common, so the last 10 of a flat list are the bench.
       tailSize: kind === "both" ? 10 : 0,
       defaultSection: kind === "rare" ? "rare" : kind === "common" ? "common" : null,
     });
-    const candidates = [...sections.rare, ...sections.common];
+    // Common-only play has no rare list even if the model ignored
+    // the heading and sectioned its reply: every sectioned answer
+    // is a bench answer, in reply order.
+    const rare = commonOnly ? [] : sections.rare;
+    const common = commonOnly ? [...sections.rare, ...sections.common] : sections.common;
+    const candidates = [...rare, ...common];
     if (!candidates.length) throw new Error("no usable candidates returned.");
-    return { candidates, rare: sections.rare, common: sections.common, model: json.model, usage: json.usage };
+    return { candidates, rare, common, model: json.model, usage: json.usage };
   }
   const candidates = parseCandidates(text, req.exclude);
   if (!candidates.length) throw new Error("no usable candidates returned.");

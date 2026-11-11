@@ -13,10 +13,11 @@ const DEFAULTS = {
   model: "claude-opus-5-5",
   effort: "low",
   mode: "auto",
+  wordStyle: "rare",
   autoAdvance: false,
   showOverlay: true,
 };
-const fields = ["apiKey", "model", "effort", "mode"];
+const fields = ["apiKey", "model", "effort", "mode", "wordStyle"];
 const checks = ["autoAdvance", "showOverlay"];
 const statusEl = document.getElementById("status");
 

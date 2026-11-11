@@ -136,3 +136,30 @@ test("there is no getSettings message handler", async () => {
   assert.equal(ret, false);
   assert.equal(responded, false);
 });
+
+test("common-only solo asks for common answers, not rarest-first", async () => {
+  const w = loadWorker({ settings: SETTINGS, responses: [textReply("Pho\nPad thai\n")] });
+  const out = await w.ask({ prompt: "Name a noodle dish", exclude: [], party: false, wordStyle: "common" });
+  const message = w.calls[0].body.messages[0].content;
+  assert.match(message, /COMMON candidate answers/);
+  assert.match(message, /certain to be accepted/);
+  assert.doesNotMatch(message, /safe fallbacks/);
+  assert.deepEqual(out.candidates, ["Pho", "Pad thai"]);
+});
+
+test("common-only party merges sectioned replies into the common list", async () => {
+  const w = loadWorker({ settings: SETTINGS, responses: [textReply("RARE:\nUdon\nCOMMON:\nPho\nPad thai\n")] });
+  const out = await w.ask({ prompt: "Name a noodle dish", exclude: [], party: true, kind: "both", wordStyle: "common" });
+  const message = w.calls[0].body.messages[0].content;
+  assert.match(message, /Give 10 COMMON/);
+  assert.doesNotMatch(message, /12 RARE/);
+  assert.deepEqual(out.rare, []);
+  assert.deepEqual(out.common, ["Udon", "Pho", "Pad thai"]);
+});
+
+test("common-only party puts a flat reply entirely in the common list", async () => {
+  const w = loadWorker({ settings: SETTINGS, responses: [textReply(FLAT_22)] });
+  const out = await w.ask({ prompt: "Name a word", exclude: [], party: true, kind: "both", wordStyle: "common" });
+  assert.deepEqual(out.rare, []);
+  assert.equal(out.common.length, 22);
+});
