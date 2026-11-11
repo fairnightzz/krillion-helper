@@ -163,3 +163,9 @@ test("common-only party puts a flat reply entirely in the common list", async ()
   assert.deepEqual(out.rare, []);
   assert.equal(out.common.length, 22);
 });
+
+test("a disabled helper refuses answer requests without calling the API", async () => {
+  const w = loadWorker({ settings: { ...SETTINGS, enabled: false }, responses: [textReply("Udon\n")] });
+  await assert.rejects(() => w.ask({ prompt: "Name a noodle dish", exclude: [], party: false }), /disabled/);
+  assert.equal(w.calls.length, 0);
+});

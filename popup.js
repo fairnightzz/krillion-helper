@@ -14,11 +14,12 @@ const DEFAULTS = {
   effort: "low",
   mode: "auto",
   wordStyle: "rare",
+  enabled: true,
   autoAdvance: false,
   showOverlay: true,
 };
 const fields = ["apiKey", "model", "effort", "mode", "wordStyle"];
-const checks = ["autoAdvance", "showOverlay"];
+const checks = ["enabled", "autoAdvance", "showOverlay"];
 const statusEl = document.getElementById("status");
 
 function show(msg, cls) {

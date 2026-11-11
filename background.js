@@ -26,6 +26,7 @@ const DEFAULTS = {
   model: "claude-opus-5-5",
   effort: "low",
   mode: "auto",        // auto | fill | suggest
+  enabled: true,         // master switch; false disables the whole extension
   wordStyle: "rare",     // rare | common: rare-first with a common bench, or common only
   autoAdvance: false,
   showOverlay: true,
@@ -395,6 +396,7 @@ async function callApiWithFallback(req, settings) {
 
 async function getAnswers(req) {
   const settings = await getSettings();
+  if (settings.enabled === false) throw new Error("Krillion Helper is disabled. Turn it on in the extension popup.");
   if (!settings.apiKey) throw new Error("No API key set. Click the extension icon to add one.");
 
   // Transient failures get up to three attempts with backoff

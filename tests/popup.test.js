@@ -126,6 +126,7 @@ test("popup fills fields from chrome.storage.local without messaging the worker 
   assert.equal(popup.elements.model.value, "claude-opus-5-5");
   assert.equal(popup.elements.effort.value, "low");
   assert.equal(popup.elements.mode.value, "auto");
+  assert.equal(popup.elements.enabled.checked, true);
   assert.equal(popup.elements.showOverlay.checked, true);
   // No background round-trip was needed to show the popup.
   assert.deepEqual(popup.calls.messages, []);
@@ -145,6 +146,7 @@ test("popup save writes every field through storage.local.set", () => {
   popup.elements.effort.value = "high";
   popup.elements.mode.value = "fill";
   popup.elements.wordStyle.value = "common";
+  popup.elements.enabled.checked = false;
   popup.elements.autoAdvance.checked = true;
   popup.elements.showOverlay.checked = false;
   popup.click("save");
@@ -157,6 +159,7 @@ test("popup save writes every field through storage.local.set", () => {
       effort: "high",
       mode: "fill",
       wordStyle: "common",
+      enabled: false,
       autoAdvance: true,
       showOverlay: false,
     },
@@ -190,6 +193,14 @@ test("changing a setting persists without clicking Save", () => {
   popup.elements.showOverlay.checked = false;
   popup.change("showOverlay");
   assert.equal(popup.store.showOverlay, false);
+  assert.equal(popup.elements.status.textContent, "Saved.");
+});
+
+test("disabling the helper persists without clicking Save", () => {
+  const popup = loadPopup({ stored: {} });
+  popup.elements.enabled.checked = false;
+  popup.change("enabled");
+  assert.equal(popup.store.enabled, false);
   assert.equal(popup.elements.status.textContent, "Saved.");
 });
 

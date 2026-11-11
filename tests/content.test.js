@@ -298,7 +298,7 @@ async function waitFor(fn, timeoutMs, label) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-function setup({ mode = "auto", wordStyle = "rare", rated = true, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
+function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
   const { doc, root, status, rnd, promptEl, input, button } = buildDoc({
     rated,
     myTurn: true,
@@ -310,7 +310,7 @@ function setup({ mode = "auto", wordStyle = "rare", rated = true, responder, rej
   // The content script's 300ms tick interval would keep the test
   // process alive forever if left running; record it for teardown.
   const intervals = [];
-  const store = { mode, wordStyle, autoAdvance: false, showOverlay: true };
+  const store = { enabled, mode, wordStyle, autoAdvance: false, showOverlay: true };
   const calls = [];
   const submittedTexts = [];
   let submits = 0;
@@ -697,6 +697,25 @@ test("casual party games get auto typing and submit too, not just rated", async 
   await waitFor(() => g.submittedTexts.length >= 1, 8000, "casual submit");
   assert.equal(g.submittedTexts[0], "ab");
   assert.equal(g.clicks, 1);
+});
+
+test("a disabled helper fetches, types, and submits nothing", async (t) => {
+  const g = setup({ enabled: false, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(2500);
+  assert.equal(g.calls.length, 0);
+  assert.equal(g.submittedTexts.length, 0);
+  assert.equal(g.input.value, "");
+});
+
+test("re-enabling the helper resumes fetching and typing", async (t) => {
+  const g = setup({ enabled: false, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(1200);
+  assert.equal(g.calls.length, 0);
+  g.fireChange({ enabled: { oldValue: false, newValue: true } });
+  await waitFor(() => g.submittedTexts.length >= 1, 8000, "submit after re-enable");
+  assert.equal(g.submittedTexts[0], "ab");
 });
 
 test("casual party games stay copy-only in suggest mode", async (t) => {

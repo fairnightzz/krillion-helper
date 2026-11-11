@@ -12,6 +12,7 @@
   // Mode drives both games: "auto" fills/types and submits, "fill"
   // fills/types only (you press Enter), "suggest" shows candidates only.
   const settings = {
+    enabled: true, // master switch: false disables everything below
     mode: "auto",
     wordStyle: "rare", // rare: rare-first with a common bench; common: common bench only
     autoAdvance: false,
@@ -245,6 +246,11 @@
     return state.candidates;
   }
   function render() {
+    // Disabled: no overlay at all, even if one was already created.
+    if (!settings.enabled) {
+      if (overlay) overlay.style.display = "none";
+      return;
+    }
     // No game surface on this page (homepage, blog, lobby shell):
     // never create or show the overlay here. It is created only
     // once a party root, prompt card, or solo dock exists.
@@ -475,6 +481,7 @@
     const live = partyInput();
     input = live && document.contains(live) ? live : input;
     if (state.roundKey !== key) return blockSubmit("round changed");
+    if (!settings.enabled) return blockSubmit("helper is disabled");
     // Re-checked at fire time, not just at schedule time: the user may
     // have switched Mode while the Enter timer was pending.
     if (settings.mode !== "auto") return blockSubmit("mode is not auto");
@@ -1029,6 +1036,9 @@
   }
 
   function tick() {
+    // Disabled: no fetching, typing, submitting, or auto-advance.
+    // The overlay is hidden by render(); nothing else runs.
+    if (!settings.enabled) return;
     maybeAutoAdvance();
     updateRatedLatch();
 
@@ -1161,11 +1171,11 @@
   }
 
   // ---------- wiring ----------
-  // The content script only ever needs these three settings. Read
+  // The content script only ever needs these settings. Read
   // exactly those keys: reading everything would load the API key
   // into this page's content-script context, which the worker's
   // comment promises never happens.
-  const SETTING_KEYS = ["mode", "wordStyle", "autoAdvance", "showOverlay"];
+  const SETTING_KEYS = ["enabled", "mode", "wordStyle", "autoAdvance", "showOverlay"];
   function loadSettings() {
     chrome.storage.local.get(SETTING_KEYS, (s) => {
       if (s) {
@@ -1177,8 +1187,15 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     const wasMode = settings.mode;
+    const wasEnabled = settings.enabled;
     for (const k of Object.keys(changes)) {
       if (k in settings) settings[k] = changes[k].newValue;
+    }
+    if (wasEnabled && !settings.enabled) {
+      // Just disabled: stop everything in flight at once.
+      cancelTyping();
+      clearTimeout(state.advanceTimer);
+      state.advanceTimer = null;
     }
     if (settings.mode !== wasMode) {
       // A pending auto-Enter must not fire after the user left auto
@@ -1197,7 +1214,7 @@
   document.addEventListener(
     "keydown",
     (e) => {
-      if (e.key !== "Enter" || !isParty()) return;
+      if (e.key !== "Enter" || !settings.enabled || !isParty()) return;
       const input = partyInput();
       if (!input || e.target !== input) return;
       cancelTyping();
