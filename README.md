@@ -20,6 +20,7 @@ Chrome extension that suggests and fills answers on krillion.io using your own A
 | Mode | auto | One control for solo and party: auto (fill + submit) / fill (you press Enter) / suggest (overlay only). |
 | Word choice | Rare first | Rare first with a common bench, or Common only (safe bench / all-common answers). Words are always typed in lowercase. |
 | Auto-click descend | off | Clicks DESCEND about 2.5 s after each result. |
+| Auto Play again | off | Rated party only, Mode auto: clicks Play again / Rematch about 3 s after a game ends, once per game. |
 | Overlay | on | Status and candidates panel, bottom-left. |
 
 Settings save automatically when you change them (the API key also saves as you type); Save writes them immediately too. The popup shows saved settings immediately from a local copy (the API key is not in that copy and waits for the storage read), then refreshes them from `chrome.storage.local`, which stays the source of truth.

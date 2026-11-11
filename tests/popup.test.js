@@ -148,6 +148,7 @@ test("popup save writes every field through storage.local.set", () => {
   popup.elements.wordStyle.value = "common";
   popup.elements.enabled.checked = false;
   popup.elements.autoAdvance.checked = true;
+  popup.elements.autoPlayAgain.checked = true;
   popup.elements.showOverlay.checked = false;
   popup.click("save");
   // JSON-normalise: the saved object is built inside the vm realm, whose
@@ -161,6 +162,7 @@ test("popup save writes every field through storage.local.set", () => {
       wordStyle: "common",
       enabled: false,
       autoAdvance: true,
+      autoPlayAgain: true,
       showOverlay: false,
     },
   ]);

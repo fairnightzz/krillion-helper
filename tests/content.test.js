@@ -206,7 +206,7 @@ Object.defineProperty(InputEl.prototype, "value", {
   configurable: true,
 });
 
-function buildDoc({ rated, myTurn, prompt, category, initialBubbles }) {
+function buildDoc({ rated, myTurn, prompt, category, initialBubbles, endButtons = false }) {
   const docEl = new El("html");
   const body = new El("body");
   docEl.appendChild(body);
@@ -285,7 +285,23 @@ function buildDoc({ rated, myTurn, prompt, category, initialBubbles }) {
     el.textContent = bub.text;
     root.appendChild(el);
   }
-  return { doc, root, status, card, rnd, promptEl, dock, input, button };
+  let endButton = null;
+  let findGameButton = null;
+  if (endButtons) {
+    const wrap = new El("div");
+    wrap.classList.add("pf-end-buttons");
+    endButton = new El("button");
+    endButton.classList.add("ds-next-btn");
+    endButton.textContent = "PLAY AGAIN";
+    endButton.addEventListener("click", () => wrap.remove());
+    findGameButton = new El("button");
+    findGameButton.classList.add("ds-next-btn", "pf-find-game");
+    findGameButton.textContent = "NEW TABLE";
+    wrap.appendChild(endButton);
+    wrap.appendChild(findGameButton);
+    root.appendChild(wrap);
+  }
+  return { doc, root, status, card, rnd, promptEl, dock, input, button, endButton, findGameButton };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -298,19 +314,20 @@ async function waitFor(fn, timeoutMs, label) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
-  const { doc, root, status, rnd, promptEl, input, button } = buildDoc({
+function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true, autoAdvance = false, autoPlayAgain = false, endButtons = false, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
+  const { doc, root, status, rnd, promptEl, input, button, endButton, findGameButton } = buildDoc({
     rated,
     myTurn: true,
     prompt,
     category,
     initialBubbles,
+    endButtons,
   });
   const location = { pathname: "/party/ABCD" };
   // The content script's 300ms tick interval would keep the test
   // process alive forever if left running; record it for teardown.
   const intervals = [];
-  const store = { enabled, mode, wordStyle, autoAdvance: false, showOverlay: true };
+  const store = { enabled, mode, wordStyle, autoAdvance, autoPlayAgain, showOverlay: true };
   const calls = [];
   const submittedTexts = [];
   let submits = 0;
@@ -404,7 +421,7 @@ function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true
     rnd.textContent = cat;
   };
   return {
-    doc, root, status, input, button, location, store, calls, submittedTexts,
+    doc, root, status, input, button, endButton, findGameButton, location, store, calls, submittedTexts,
     get submits() {
       return submits;
     },
@@ -725,4 +742,34 @@ test("casual party games stay copy-only in suggest mode", async (t) => {
   assert.equal(g.submittedTexts.length, 0);
   assert.equal(g.clicks, 0);
   assert.equal(g.input.value, "");
+});
+
+test("auto Play again clicks Play again once when on, auto, and rated", async (t) => {
+  const g = setup({ endButtons: true, autoPlayAgain: true, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => (g.endButton._clicked || 0) >= 1, 6500, "Play again clicked");
+  await sleep(1500);
+  assert.equal(g.endButton._clicked, 1);
+  assert.equal(g.findGameButton._clicked || 0, 0);
+});
+
+test("auto Play again does not click when off", async (t) => {
+  const g = setup({ endButtons: true, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(4500);
+  assert.equal(g.endButton._clicked || 0, 0);
+});
+
+test("auto Play again does not click in fill mode", async (t) => {
+  const g = setup({ endButtons: true, autoPlayAgain: true, mode: "fill", responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(4500);
+  assert.equal(g.endButton._clicked || 0, 0);
+});
+
+test("auto-advance alone does not click Play again", async (t) => {
+  const g = setup({ endButtons: true, autoAdvance: true, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(4500);
+  assert.equal(g.endButton._clicked || 0, 0);
 });

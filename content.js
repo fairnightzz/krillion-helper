@@ -16,6 +16,7 @@
     mode: "auto",
     wordStyle: "rare", // rare: rare-first with a common bench; common: common bench only
     autoAdvance: false,
+    autoPlayAgain: false, // rated party: click Play again / Rematch after a game ends
     showOverlay: true,
   };
 
@@ -40,6 +41,8 @@
     lastCorrection: null,
     filledForUser: null,
     advanceTimer: null,
+    playAgainTimer: null, // pending auto Play Again timeout
+    playAgainDoneFor: null, // room path Play Again already clicked for
     error: null,
     status: "idle",
     said: new Set(),      // party: answers already played this category (lowercase)
@@ -657,6 +660,8 @@
 
   function resetRound(key, prompt) {
     clearTimeout(state.advanceTimer);
+    clearTimeout(state.playAgainTimer);
+    state.playAgainTimer = null;
     // Capture the leftover before cancelTyping drops typingFor: a
     // draft still being typed when the category changed is a
     // leftover too, and the next round must be able to clear it.
@@ -712,14 +717,67 @@
   // ---------- main loop ----------
   function maybeAutoAdvance() {
     // Feedback phase (the prompt card is gone, a DESCEND button is shown).
+    // The game-end panel lives inside the same wrapper, so never let
+    // this Descend clicker touch it: Play Again has its own control.
+    if ($(".pf-end-buttons")) return;
     const next = $(".ds-next-wrap .ds-next-btn");
     if (next && settings.autoAdvance && settings.mode === "auto" && !state.advanceTimer) {
       state.advanceTimer = setTimeout(() => {
         state.advanceTimer = null;
         const n = $(".ds-next-wrap .ds-next-btn");
-        if (n) n.click();
+        if (n && !$(".pf-end-buttons")) n.click();
       }, 2500);
     }
+  }
+
+  // The game-end Play Again button: the first enabled button in the
+  // end panel that is not the New Opponent / New Table button. Its
+  // label is REMATCH in a two-player duel and PLAY AGAIN otherwise;
+  // both run the same "again" action in the game. Returns null when
+  // the panel is absent, the game is paused, or no such button is
+  // enabled.
+  function playAgainButton() {
+    const wrap = $(".pf-end-buttons");
+    if (!wrap) return null;
+    const btns = wrap.querySelectorAll(".ds-next-btn:not(.pf-find-game)");
+    for (const b of btns) {
+      const t = (b.textContent || "").replace(/\s+/g, " ").trim().toUpperCase();
+      if ((t === "PLAY AGAIN" || t === "REMATCH") && !b.disabled) return b;
+    }
+    return null;
+  }
+
+  // Auto Play Again: rated party only, Mode auto only, off by
+  // default. Clicks once, about 3s after the end panel appears, so
+  // the result and rating change stay visible briefly. Guards are
+  // re-checked at fire time, and the click is latched per room so
+  // a panel that stays up is never clicked twice; the latch clears
+  // once the panel disappears (a new game has started).
+  function maybePlayAgain() {
+    const btn = playAgainButton();
+    if (!btn) {
+      if (state.playAgainTimer !== null) {
+        clearTimeout(state.playAgainTimer);
+        state.playAgainTimer = null;
+      }
+      state.playAgainDoneFor = null;
+      return;
+    }
+    if (!settings.enabled || !settings.autoPlayAgain || settings.mode !== "auto") return;
+    if (!isParty() || !isRatedParty()) return;
+    if (state.playAgainDoneFor === location.pathname) return;
+    if (state.playAgainTimer !== null) return;
+    const path = location.pathname;
+    state.playAgainTimer = setTimeout(() => {
+      state.playAgainTimer = null;
+      if (location.pathname !== path) return;
+      if (!settings.enabled || !settings.autoPlayAgain || settings.mode !== "auto") return;
+      if (!isParty() || !isRatedParty()) return;
+      const live = playAgainButton();
+      if (!live) return;
+      state.playAgainDoneFor = path;
+      live.click();
+    }, 3000 + Math.random() * 700);
   }
 
   function isParty() {
@@ -1041,6 +1099,9 @@
     if (!settings.enabled) return;
     maybeAutoAdvance();
     updateRatedLatch();
+    // Runs even with no prompt showing, so it can act on the
+    // game-end panel after the last category clears.
+    maybePlayAgain();
 
     const party = isParty();
     const prompt = currentPrompt();
@@ -1175,7 +1236,7 @@
   // exactly those keys: reading everything would load the API key
   // into this page's content-script context, which the worker's
   // comment promises never happens.
-  const SETTING_KEYS = ["enabled", "mode", "wordStyle", "autoAdvance", "showOverlay"];
+  const SETTING_KEYS = ["enabled", "mode", "wordStyle", "autoAdvance", "autoPlayAgain", "showOverlay"];
   function loadSettings() {
     chrome.storage.local.get(SETTING_KEYS, (s) => {
       if (s) {
@@ -1196,6 +1257,8 @@
       cancelTyping();
       clearTimeout(state.advanceTimer);
       state.advanceTimer = null;
+      clearTimeout(state.playAgainTimer);
+      state.playAgainTimer = null;
     }
     if (settings.mode !== wasMode) {
       // A pending auto-Enter must not fire after the user left auto

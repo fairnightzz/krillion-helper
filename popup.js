@@ -16,10 +16,11 @@ const DEFAULTS = {
   wordStyle: "rare",
   enabled: true,
   autoAdvance: false,
+  autoPlayAgain: false,
   showOverlay: true,
 };
 const fields = ["apiKey", "model", "effort", "mode", "wordStyle"];
-const checks = ["enabled", "autoAdvance", "showOverlay"];
+const checks = ["enabled", "autoAdvance", "autoPlayAgain", "showOverlay"];
 const statusEl = document.getElementById("status");
 
 function show(msg, cls) {

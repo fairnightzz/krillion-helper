@@ -27,6 +27,7 @@ const DEFAULTS = {
   effort: "low",
   mode: "auto",        // auto | fill | suggest
   enabled: true,         // master switch; false disables the whole extension
+  autoPlayAgain: false,  // rated party: click Play again / Rematch after a game ends
   wordStyle: "rare",     // rare | common: rare-first with a common bench, or common only
   autoAdvance: false,
   showOverlay: true,
