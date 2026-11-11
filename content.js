@@ -43,6 +43,8 @@
     advanceTimer: null,
     playAgainTimer: null, // pending auto Play Again timeout
     playAgainDoneFor: null, // room path Play Again already clicked for
+    joinTimer: null, // pending auto Join Next Game timeout
+    joinDoneFor: null, // room path Join Next Game already clicked for
     error: null,
     status: "idle",
     said: new Set(),      // party: answers already played this category (lowercase)
@@ -668,6 +670,8 @@
     clearTimeout(state.advanceTimer);
     clearTimeout(state.playAgainTimer);
     state.playAgainTimer = null;
+    clearTimeout(state.joinTimer);
+    state.joinTimer = null;
     // Capture the leftover before cancelTyping drops typingFor: a
     // draft still being typed when the category changed is a
     // leftover too, and the next round must be able to clear it.
@@ -784,6 +788,52 @@
       state.playAgainDoneFor = path;
       live.click();
     }, 3000 + Math.random() * 700);
+  }
+
+  // The lobby's Join Next Game button: same classes as the host's
+  // WAKE THE PUFFER button, so the label is the only thing that
+  // distinguishes them. Returns null when the lobby shows no
+  // enabled Join Next Game button.
+  function joinNextButton() {
+    const btns = document.querySelectorAll(".ds-begin-btn.pf-start");
+    for (const b of btns) {
+      const t = (b.textContent || "").replace(/\s+/g, " ").trim().toUpperCase();
+      if (t === "JOIN NEXT GAME" && !b.disabled) return b;
+    }
+    return null;
+  }
+
+  // Auto Join Next Game: the second half of auto Play Again, under
+  // the same setting and gates. Play Again alone only returns to
+  // the lobby; this button is what actually joins the next game.
+  // It fires independently of whether Play Again itself was
+  // auto-clicked or pressed by hand, once per room, about 2s after
+  // the button appears. The latch clears once the button is gone.
+  function maybeJoinNext() {
+    const btn = joinNextButton();
+    if (!btn) {
+      if (state.joinTimer !== null) {
+        clearTimeout(state.joinTimer);
+        state.joinTimer = null;
+      }
+      state.joinDoneFor = null;
+      return;
+    }
+    if (!settings.enabled || !settings.autoPlayAgain || settings.mode !== "auto") return;
+    if (!isParty() || !isRatedParty()) return;
+    if (state.joinDoneFor === location.pathname) return;
+    if (state.joinTimer !== null) return;
+    const path = location.pathname;
+    state.joinTimer = setTimeout(() => {
+      state.joinTimer = null;
+      if (location.pathname !== path) return;
+      if (!settings.enabled || !settings.autoPlayAgain || settings.mode !== "auto") return;
+      if (!isParty() || !isRatedParty()) return;
+      const live = joinNextButton();
+      if (!live) return;
+      state.joinDoneFor = path;
+      live.click();
+    }, 2000 + Math.random() * 500);
   }
 
   function isParty() {
@@ -1106,8 +1156,10 @@
     maybeAutoAdvance();
     updateRatedLatch();
     // Runs even with no prompt showing, so it can act on the
-    // game-end panel after the last category clears.
+    // game-end panel after the last category clears, and on the
+    // lobby's Join Next Game button after Play Again.
     maybePlayAgain();
+    maybeJoinNext();
 
     const party = isParty();
     const prompt = currentPrompt();
@@ -1265,6 +1317,8 @@
       state.advanceTimer = null;
       clearTimeout(state.playAgainTimer);
       state.playAgainTimer = null;
+      clearTimeout(state.joinTimer);
+      state.joinTimer = null;
     }
     if (settings.mode !== wasMode) {
       // A pending auto-Enter must not fire after the user left auto

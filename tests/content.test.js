@@ -206,7 +206,7 @@ Object.defineProperty(InputEl.prototype, "value", {
   configurable: true,
 });
 
-function buildDoc({ rated, myTurn, prompt, category, initialBubbles, endButtons = false }) {
+function buildDoc({ rated, myTurn, prompt, category, initialBubbles, endButtons = false, joinButton = false, joinLabel = "JOIN NEXT GAME" }) {
   const docEl = new El("html");
   const body = new El("body");
   docEl.appendChild(body);
@@ -301,7 +301,15 @@ function buildDoc({ rated, myTurn, prompt, category, initialBubbles, endButtons 
     wrap.appendChild(findGameButton);
     root.appendChild(wrap);
   }
-  return { doc, root, status, card, rnd, promptEl, dock, input, button, endButton, findGameButton };
+  let joinBtn = null;
+  if (joinButton) {
+    joinBtn = new El("button");
+    joinBtn.classList.add("ds-begin-btn", "pf-start");
+    joinBtn.textContent = joinLabel;
+    joinBtn.addEventListener("click", () => joinBtn.remove());
+    root.appendChild(joinBtn);
+  }
+  return { doc, root, status, card, rnd, promptEl, dock, input, button, endButton, findGameButton, joinBtn };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -314,14 +322,16 @@ async function waitFor(fn, timeoutMs, label) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true, autoAdvance = false, autoPlayAgain = false, endButtons = false, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
-  const { doc, root, status, rnd, promptEl, input, button, endButton, findGameButton } = buildDoc({
+function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true, autoAdvance = false, autoPlayAgain = false, endButtons = false, joinButton = false, joinLabel, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
+  const { doc, root, status, rnd, promptEl, input, button, endButton, findGameButton, joinBtn } = buildDoc({
     rated,
     myTurn: true,
     prompt,
     category,
     initialBubbles,
     endButtons,
+    joinButton,
+    ...(joinLabel === undefined ? {} : { joinLabel }),
   });
   const location = { pathname: "/party/ABCD" };
   // The content script's 300ms tick interval would keep the test
@@ -421,7 +431,7 @@ function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true
     rnd.textContent = cat;
   };
   return {
-    doc, root, status, input, button, endButton, findGameButton, location, store, calls, submittedTexts,
+    doc, root, status, input, button, endButton, findGameButton, joinBtn, location, store, calls, submittedTexts,
     get submits() {
       return submits;
     },
@@ -777,4 +787,26 @@ test("auto-advance alone does not click Play again", async (t) => {
   t.after(() => g.teardown());
   await sleep(4500);
   assert.equal(g.endButton._clicked || 0, 0);
+});
+
+test("auto Join next game clicks JOIN NEXT GAME once when on, auto, and rated", async (t) => {
+  const g = setup({ joinButton: true, autoPlayAgain: true, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => (g.joinBtn._clicked || 0) >= 1, 5000, "Join next game clicked");
+  await sleep(1200);
+  assert.equal(g.joinBtn._clicked, 1);
+});
+
+test("auto Join next game does not click when off", async (t) => {
+  const g = setup({ joinButton: true, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(3500);
+  assert.equal(g.joinBtn._clicked || 0, 0);
+});
+
+test("auto Join next game never clicks Wake the Puffer", async (t) => {
+  const g = setup({ joinButton: true, joinLabel: "▼ WAKE THE PUFFER ▼", autoPlayAgain: true, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(3500);
+  assert.equal(g.joinBtn._clicked || 0, 0);
 });
