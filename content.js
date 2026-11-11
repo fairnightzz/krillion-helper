@@ -48,7 +48,6 @@
     partyFetchAt: 0,    // last party candidate fetch, for the refetch cooldown
     typing: null,         // rated party: in-flight humanize.js handle
     typingFor: null,      // candidate being typed
-    clearingBox: null,    // rated party: input being backspace-deleted
     awaitingResult: null, // rated party: text just submitted, result pending
     awaitingAt: 0,
     enterTimer: null, // rated party: pending auto-Enter timeout
@@ -318,60 +317,6 @@
     );
   }
 
-  // Delete the box contents one backspace at a time: remove the
-  // last character through the native setter, then dispatch a
-  // shaped InputEvent (deleteContentBackward), paced like a
-  // player. Setting the value to "" in one go with a bare Event
-  // did not delete the text live: the game's input state kept the
-  // old value, so the "deleted" answer carried over and was then
-  // treated as text the player typed. This follows the same
-  // shaped-event path live typing uses. Stops, leaving
-  // prevBoxText as the backup, if the round changes, the input
-  // remounts, or the box no longer holds the expected shrinking
-  // prefix. done(ok) fires once.
-  function deleteBoxText(input, done) {
-    if (!input || !document.contains(input)) {
-      if (done) done(false);
-      return;
-    }
-    if (!input.value) {
-      if (done) done(true);
-      return;
-    }
-    if (state.clearingBox) return; // a delete is already running
-    state.clearingBox = input;
-    const key = state.roundKey;
-    const chars = [...input.value];
-    let remaining = chars.length;
-    const step = () => {
-      const live = partyInput();
-      const expected = chars.slice(0, remaining).join("");
-      if (
-        state.roundKey !== key || live !== input ||
-        !document.contains(input) || input.value !== expected
-      ) {
-        state.clearingBox = null;
-        if (done) done(false);
-        return;
-      }
-      if (remaining <= 0) {
-        state.clearingBox = null;
-        if (done) done(true);
-        return;
-      }
-      remaining -= 1;
-      nativeSetter.call(input, chars.slice(0, remaining).join(""));
-      try {
-        input.dispatchEvent(new InputEvent("input", {
-          bubbles: true, cancelable: true, data: null, inputType: "deleteContentBackward",
-        }));
-      } catch (_) {
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      setTimeout(step, 30 + Math.random() * 50);
-    };
-    step();
-  }
   function submitForm(form) {
     // Let React commit the state update from the input event first.
     setTimeout(() => {
@@ -731,7 +676,6 @@
       partyNoted: false,
       typing: null,
       typingFor: null,
-      clearingBox: null,
       wasMyTurn: false,
       partyRejectSeen: null,
       awaitingResult: null,
@@ -885,17 +829,17 @@
     if (!myTurn) {
       if (state.wasMyTurn) {
         // Time ran out / the turn passed. Identify the leftover
-        // before cancelTyping drops typingFor, then backspace
-        // this extension's wrong answer out of the box so it
-        // cannot carry into the next turn. Only text identified
-        // as this extension's leftover is deleted; anything else
-        // in the box is left alone. The stale-box check on the
-        // next turn is the backup if the delete is interrupted.
+        // before cancelTyping drops typingFor, then clear this
+        // extension's wrong answer from the box so it cannot
+        // carry into the next turn. Only text identified as this
+        // extension's leftover is cleared; anything else in the
+        // box is left alone. The stale-box check on the next
+        // turn is the backup if this clear does not stick.
         const live = partyInput();
         const own = live && isOwnLeftover(live.value);
         captureLeftover();
         cancelTyping();
-        if (own && live && live.value) deleteBoxText(live);
+        if (own && live && live.value) fillInput(live, "");
       }
       state.wasMyTurn = false;
       // An attempted answer counts as used even if its bubble was
@@ -955,9 +899,6 @@
       }
       render();
     }
-    // A backspace delete is still emptying the box: wait for it
-    // instead of typing over the shrinking text.
-    if (state.clearingBox) return;
     if (state.typing) return;
 
     // The player just pressed Enter on this text and the result has not
@@ -1063,16 +1004,10 @@
       } else if (state.prevBoxText && norm(input.value) === norm(state.prevBoxText)) {
         // Leftover from the previous round: the game keeps the last
         // submitted answer in the box, and it is not this round's
-        // candidate. Backspace exactly that text out, then type.
-        // Keep prevBoxText until the delete finishes, so an
-        // interrupted delete retries instead of being misread as
-        // player text on the next tick. Anything else in the box
-        // is the player's own text: never overwrite it.
-        const leftover = state.prevBoxText;
-        deleteBoxText(input, (ok) => {
-          if (ok && state.prevBoxText === leftover) state.prevBoxText = null;
-        });
-        return;
+        // candidate. Clear exactly that text once, then type. Anything
+        // else in the box is the player's own text: never overwrite it.
+        state.prevBoxText = null;
+        fillInput(input, "");
       } else {
         setStatus("your text is in the box — not overwriting");
         return;
@@ -1091,9 +1026,9 @@
     if (!prompt) {
       if (state.roundKey !== null) {
         // A prompt-free gap between categories must not wipe the
-        // leftover's identity: identify and backspace-delete it
-        // here, before the state below is cleared, or the next
-        // category treats it as text the player typed.
+        // leftover's identity: identify and clear it here, before
+        // the state below is cleared, or the next category treats
+        // it as text the player typed.
         const live = partyInput();
         const own = state.wasMyTurn && live && isOwnLeftover(live.value);
         captureLeftover();
@@ -1105,7 +1040,7 @@
         state.candidates = [];
         state.rare = [];
         state.common = [];
-        if (own && live && live.value) deleteBoxText(live);
+        if (own && live && live.value) fillInput(live, "");
         setStatus("waiting for a prompt");
       }
       return;
