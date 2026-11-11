@@ -105,7 +105,11 @@ function buildUserMessage(prompt, exclude, party, kind, count, wordStyle) {
   // for the bench alone, whatever list was requested.
   let text;
   if (commonOnly) {
-    text = `Game prompt: "${prompt}"\n\nGive 10 COMMON candidate answers — moderately uncommon answers certain to be accepted, rarest first among them. Output them under a "COMMON:" heading, one per line, and nothing else in that section.`;
+    // 22, not 10: a duel burns through the bench, so the common
+    // pool fills the whole slot count the two lists would have
+    // held (12 rare + 10 common) instead of leaving the rare
+    // portion empty.
+    text = `Game prompt: "${prompt}"\n\nGive 22 COMMON candidate answers — moderately uncommon answers certain to be accepted, rarest first among them. Output them under a "COMMON:" heading, one per line, and nothing else in that section.`;
   } else if (kind === "rare") {
     text = `Game prompt: "${prompt}"\n\nGive 12 RARE candidate answers, rarest first. Output them under a "RARE:" heading, one per line, and nothing else in that section.`;
   } else if (kind === "common") {
@@ -347,7 +351,7 @@ async function callApi({ prompt, exclude, party, kind, wordStyle }, settings, us
     "anthropic-dangerous-direct-browser-access": "true",
   };
   const commonOnly = wordStyle === "common";
-  const count = party ? (commonOnly ? 10 : kind === "rare" ? 12 : kind === "common" ? 10 : 22) : settings.candidateCount;
+  const count = party ? (commonOnly ? 22 : kind === "rare" ? 12 : kind === "common" ? 10 : 22) : settings.candidateCount;
   const body = {
     model: settings.model,
     max_tokens: 4000,

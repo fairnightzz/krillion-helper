@@ -151,7 +151,7 @@ test("common-only party merges sectioned replies into the common list", async ()
   const w = loadWorker({ settings: SETTINGS, responses: [textReply("RARE:\nUdon\nCOMMON:\nPho\nPad thai\n")] });
   const out = await w.ask({ prompt: "Name a noodle dish", exclude: [], party: true, kind: "both", wordStyle: "common" });
   const message = w.calls[0].body.messages[0].content;
-  assert.match(message, /Give 10 COMMON/);
+  assert.match(message, /Give 22 COMMON/);
   assert.doesNotMatch(message, /12 RARE/);
   assert.deepEqual(out.rare, []);
   assert.deepEqual(out.common, ["Udon", "Pho", "Pad thai"]);
