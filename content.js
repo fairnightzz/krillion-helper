@@ -2,9 +2,9 @@
 // Watches the game, asks the background worker for candidate answers as soon as a
 // prompt is visible (during the 3s preview), then fills / submits them in the
 // 25s answer window. Falls through the candidate list on rejections.
-// In rated Puffer Party games it types, human-like and one keystroke at a
-// time (see humanize.js), and submits only in Mode "auto"; in Mode
-// "fill" the player presses Enter.
+// In Puffer Party games (rated and casual) it types, human-like and
+// one keystroke at a time (see humanize.js), and submits only in
+// Mode "auto"; in Mode "fill" the player presses Enter.
 
 (() => {
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -269,7 +269,7 @@
     o.classList.toggle("kch-party", party);
     o.classList.toggle("kch-rated", rated);
     $(".kch-mode", o).textContent = rated ? "rated" : party ? "party" : settings.mode;
-    $(".kch-hint", o).textContent = items.length ? (rated ? (settings.mode === "auto" ? "auto-Enter on" : "typing — press Enter") : "click = copy") : "";
+    $(".kch-hint", o).textContent = items.length ? (partyTypingOn() ? (settings.mode === "auto" ? "auto-Enter on" : "typing — press Enter") : "click = copy") : "";
     const st = $(".kch-status", o);
     st.textContent = state.error ? "error: " + state.error : state.status;
     st.classList.toggle("kch-err", !!state.error);
@@ -347,15 +347,19 @@
       if (/^Unrated\b/i.test(aria)) return false;
       const label = $(".label", pod);
       const txt = label ? label.textContent.trim() : "";
-      if (/^RATED\b/.test(txt)) return true;
-      if (/^UNRATED\b/.test(txt)) return false;
+      // The label check must be case-insensitive like the aria
+      // check: a mixed-case "Rated …" label with no aria-label
+      // otherwise never latches.
+      if (/^Rated\b/i.test(txt)) return true;
+      if (/^Unrated\b/i.test(txt)) return false;
+      if (/^Quick Play\b/i.test(txt)) return false;
       return null;
     }
     const info = $(".pf-rated-info .label");
     if (info) {
       const txt = info.textContent.trim();
-      if (/^RATED\b/.test(txt)) return true;
-      if (/^QUICK PLAY\b/.test(txt)) return false;
+      if (/^Rated\b/i.test(txt)) return true;
+      if (/^Quick Play\b/i.test(txt)) return false;
     }
     return null;
   }
@@ -371,7 +375,15 @@
     return state.ratedLatched;
   }
 
-  // ---------- rated party typing ----------
+  // Typing and submitting run in every party game — rated and
+  // casual alike — in every mode except suggest, which stays
+  // copy-only. The rated latch above now only drives the overlay
+  // badge, not whether typing happens.
+  function partyTypingOn() {
+    return isParty() && settings.mode !== "suggest";
+  }
+
+  // ---------- party typing ----------
   // The party dock is a <div>, not a form: its submit control is the
   // "Send answer" button (.ds-dive-btn) beside the input; the timer
   // digits show lives, and Enter on the input also submits. Typing only
@@ -463,7 +475,6 @@
     const live = partyInput();
     input = live && document.contains(live) ? live : input;
     if (state.roundKey !== key) return blockSubmit("round changed");
-    if (!isRatedParty()) return blockSubmit("not a rated table");
     // Re-checked at fire time, not just at schedule time: the user may
     // have switched Mode while the Enter timer was pending.
     if (settings.mode !== "auto") return blockSubmit("mode is not auto");
@@ -534,7 +545,7 @@
       shouldContinue: (prefix) => {
         if (state.roundKey !== key) return false;
         if (settings.mode === "suggest") return false;
-        if (!isRatedParty() || !isMyTurn(input)) return false;
+        if (!isMyTurn(input)) return false;
         if (partyInput() !== input || !document.contains(input)) return false;
         if (input.value !== prefix) return false; // user or game changed the box
         if (state.said.has(norm(candidate)) || isRejected(candidate)) return false;
@@ -548,7 +559,7 @@
       state.typing = null;
       // On abort, keep typingFor: the abandoned draft still identifies
       // what this extension typed, so the dead-candidate recovery in
-      // partyRatedTick can clear it. Cleared by cancelTyping,
+      // partyAutoTick can clear it. Cleared by cancelTyping,
       // resetRound, or the next startTyping.
       if (ok && state.roundKey === key) {
         state.typingFor = null;
@@ -604,7 +615,7 @@
           state.rareIdx = 0;
           state.commonIdx = 0;
         }
-        setStatus(isRatedParty() ? usableCount() + " unused · will type on your turn" : "click a word to copy it · " + usableCount() + " unused");
+        setStatus(partyTypingOn() ? usableCount() + " unused · will type on your turn" : "click a word to copy it · " + usableCount() + " unused");
         return;
       }
       if (isParty()) {
@@ -622,7 +633,7 @@
           state.rareIdx = 0;
           state.commonIdx = 0;
         }
-        setStatus(isRatedParty() ? usableCount() + " unused · will type on your turn" : "click a word to copy it · " + usableCount() + " unused");
+        setStatus(partyTypingOn() ? usableCount() + " unused · will type on your turn" : "click a word to copy it · " + usableCount() + " unused");
         return;
       }
       const have = new Set(state.candidates.map(norm));
@@ -815,14 +826,14 @@
       fetchCandidates(state.prompt, exclude, kind);
       return;
     }
-    if (changed) setStatus(isRatedParty() ? usable + " unused" : "click a word to copy it · " + usable + " unused");
+    if (changed) setStatus(partyTypingOn() ? usable + " unused" : "click a word to copy it · " + usable + " unused");
   }
 
-  // Rated party only; casual party keeps the suggest/copy behaviour above.
-  // Types the rarest unused candidate when it is our turn, and submits
-  // in Mode "auto". Mode "suggest" disables typing; Mode "fill" types
-  // only, and the player presses Enter.
-  function partyRatedTick() {
+  // Every party game, rated or casual. Types the rarest unused
+  // candidate when it is our turn, and submits in Mode "auto".
+  // Mode "suggest" disables typing; Mode "fill" types only, and
+  // the player presses Enter.
+  function partyAutoTick() {
     if (settings.mode === "suggest") return;
     const input = partyInput();
     const myTurn = isMyTurn(input);
@@ -1058,7 +1069,7 @@
 
     if (party) {
       partyTick();
-      if (isRatedParty()) partyRatedTick();
+      partyAutoTick();
       return;
     }
 
@@ -1179,14 +1190,14 @@
     render();
   });
 
-  // Enter submits in rated party. Stop typing the moment it is pressed
+  // Enter submits in party games. Stop typing the moment it is pressed
   // so no keystroke lands after the submission, and remember what was
   // submitted until the result arrives. This listener only ever cancels
   // the extension's typing; it never prevents or handles the key itself.
   document.addEventListener(
     "keydown",
     (e) => {
-      if (e.key !== "Enter" || !isRatedParty()) return;
+      if (e.key !== "Enter" || !isParty()) return;
       const input = partyInput();
       if (!input || e.target !== input) return;
       cancelTyping();

@@ -298,9 +298,9 @@ async function waitFor(fn, timeoutMs, label) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-function setup({ mode = "auto", wordStyle = "rare", responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
+function setup({ mode = "auto", wordStyle = "rare", rated = true, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
   const { doc, root, status, rnd, promptEl, input, button } = buildDoc({
-    rated: true,
+    rated,
     myTurn: true,
     prompt,
     category,
@@ -689,4 +689,21 @@ test("solo filling is always lowercase, whatever the list spelling", async (t) =
   await waitFor(() => g.submitted.length >= 1, 5000, "solo submit");
   assert.equal(g.submitted[0], "udon");
   assert.equal(g.clicks, 1);
+});
+
+test("casual party games get auto typing and submit too, not just rated", async (t) => {
+  const g = setup({ rated: false, responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.length >= 1, 8000, "casual submit");
+  assert.equal(g.submittedTexts[0], "ab");
+  assert.equal(g.clicks, 1);
+});
+
+test("casual party games stay copy-only in suggest mode", async (t) => {
+  const g = setup({ rated: false, mode: "suggest", responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await sleep(2500);
+  assert.equal(g.submittedTexts.length, 0);
+  assert.equal(g.clicks, 0);
+  assert.equal(g.input.value, "");
 });
