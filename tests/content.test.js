@@ -836,3 +836,21 @@ test("auto Join next game never clicks Wake the Puffer", async (t) => {
   await sleep(3500);
   assert.equal(g.joinBtn._clicked || 0, 0);
 });
+
+test("party answers over 20 characters are skipped, including at the 20 boundary", async (t) => {
+  const g = setup({ responder: sectionResponder(["abcdefghijklmnopqrstu", "abcdefghijklmnopqrst", "ab"], ["cd"]) });
+  t.after(() => g.teardown());
+  // The harness game never acknowledges a submit, so the second
+  // pick waits out the 5s result window after the first (long) word.
+  await waitFor(() => g.submittedTexts.length >= 2, 14000, "short submits");
+  assert.equal(g.submittedTexts[0], "abcdefghijklmnopqrst");
+  assert.equal(g.submittedTexts[1], "ab");
+  assert.ok(!g.submittedTexts.includes("abcdefghijklmnopqrstu"));
+});
+
+test("when only long answers remain, the shortest usable one is typed", async (t) => {
+  const g = setup({ responder: sectionResponder(["abcdefghijklmnopqrstu"], []) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.length >= 1, 8000, "long fallback submit");
+  assert.equal(g.submittedTexts[0], "abcdefghijklmnopqrstu");
+});

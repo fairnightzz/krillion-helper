@@ -880,6 +880,30 @@
     }
     return null;
   }
+  // Fallback when nothing fits the party length cap: the shortest
+  // usable answer still in either list, so a round of only long
+  // answers still has something to type instead of reporting "out
+  // of candidates". Scans in list order (rare, then common) so
+  // equal lengths keep rarest-first; also advances that list's
+  // pointer to the entry found.
+  function pickShortestUsable(boxMaxLen) {
+    const lists = settings.wordStyle === "common"
+      ? [["common", state.common, state.commonIdx]]
+      : [["rare", state.rare, state.rareIdx], ["common", state.common, state.commonIdx]];
+    let best = null;
+    for (const [name, list, start] of lists) {
+      for (let i = start; i < list.length; i += 1) {
+        const c = list[i];
+        if (c.length > boxMaxLen) continue;
+        if (isRejected(c) || state.said.has(norm(c))) continue;
+        if (!best || c.length < best.c.length) best = { c, name, index: i };
+      }
+    }
+    if (!best) return null;
+    if (best.name === "rare") state.rareIdx = best.index;
+    else state.commonIdx = best.index;
+    return best.c;
+  }
 
   function partyTick() {
     let changed = false;
@@ -1055,7 +1079,13 @@
       fillInput(input, "");
     }
 
-    const maxLen = input.maxLength > 0 ? input.maxLength : 60;
+    const boxMaxLen = input.maxLength > 0 ? input.maxLength : 60;
+    // Party turns are only a few seconds: an answer over 20
+    // characters takes ~2.2s+ to type, leaving little room for a
+    // rejection and a retry. Skip those; if nothing fits, the
+    // fallback below types the shortest usable answer instead.
+    // Solo has a 25s window, so it keeps the input's own limit.
+    const maxLen = Math.min(boxMaxLen, 20);
     // Pick rarest-first, then the common bench. Jump: after one
     // rejection in this turn, or late in the turn, skip the rest of
     // the rare list and go straight to the common bench, where the
@@ -1072,6 +1102,7 @@
       if (!candidate) candidate = pickFromList("rare", state.rareIdx, maxLen);
       if (!candidate) candidate = pickFromList("common", state.commonIdx, maxLen);
     }
+    if (!candidate) candidate = pickShortestUsable(boxMaxLen);
     // Always type lowercase: no Shift keys, and the game's matching
     // is case-insensitive. The stored list keeps its spelling for
     // display and for readable refetch excludes.
