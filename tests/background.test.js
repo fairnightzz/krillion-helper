@@ -169,3 +169,12 @@ test("a disabled helper refuses answer requests without calling the API", async 
   await assert.rejects(() => w.ask({ prompt: "Name a noodle dish", exclude: [], party: false }), /disabled/);
   assert.equal(w.calls.length, 0);
 });
+
+test("the sent system prompt prefers established acronyms and forbids inventing them", async () => {
+  const w = loadWorker({ settings: SETTINGS, responses: [textReply("PUBG\n")] });
+  await w.ask({ prompt: "Name a video game", exclude: [], party: false });
+  const system = w.calls[0].body.system;
+  assert.match(system, /acronym/);
+  assert.match(system, /PUBG/);
+  assert.match(system, /Never invent an abbreviation/);
+});

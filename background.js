@@ -49,6 +49,7 @@ Rules for every candidate:
   on a standard reference list for that category (a Wikipedia "list of ..." page, a dictionary,
   an encyclopedia). Reference-list membership matters more than fame.
 - Use the most canonical, commonly written name. No parentheses, no explanations, no qualifiers.
+- Prefer the short form people actually type: when an item is overwhelmingly known by an acronym or initialism, that short form IS the canonical name — give PUBG, not PlayerUnknown's Battlegrounds; give NASA, not National Aeronautics and Space Administration. Never invent an abbreviation, and never shorten a name that has no established short form.
 - Keep it short: ideally 1-3 words. Never more than 6 words.
 - Do not invent items. Do not use near-misses, slang spellings, or hyper-local obscurities that
   would not appear on reference lists.
