@@ -268,7 +268,7 @@
     const items = displayList();
     const curText = party ? norm(state.typingFor || state.filledForUser || "") : "";
     const sig = [
-      party, rated, settings.showOverlay, settings.mode,
+      party, rated, settings.showOverlay, settings.mode, settings.wordStyle,
       state.status, state.error, state.idx, curText, state.copied,
       items.join("\u0000"), state.rejected.join("\u0000"),
       [...state.said].sort().join("\u0000"),
@@ -278,7 +278,13 @@
     o.classList.toggle("kch-party", party);
     o.classList.toggle("kch-rated", rated);
     $(".kch-mode", o).textContent = rated ? "rated" : party ? "party" : settings.mode;
-    $(".kch-hint", o).textContent = items.length ? (partyTypingOn() ? (settings.mode === "auto" ? "auto-Enter on" : "typing — press Enter") : "click = copy") : "";
+    // Name the word choice in the hint: with 22 bench entries split
+    // across two columns, the left column is easily misread as a
+    // rare list. The hint must say common-only is in effect.
+    const baseHint = partyTypingOn() ? (settings.mode === "auto" ? "auto-Enter on" : "typing — press Enter") : "click = copy";
+    $(".kch-hint", o).textContent = items.length
+      ? (party && settings.wordStyle === "common" ? "common only · " + baseHint : baseHint)
+      : "";
     const st = $(".kch-status", o);
     st.textContent = state.error ? "error: " + state.error : state.status;
     st.classList.toggle("kch-err", !!state.error);

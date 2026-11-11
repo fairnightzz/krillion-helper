@@ -567,6 +567,11 @@ test("common-only types from the common bench and never the rare list", async (t
   assert.equal(g.calls[0].wordStyle, "common");
   await waitFor(() => g.submittedTexts.length >= 2, 9000, "two common submits");
   assert.deepEqual(g.submittedTexts.slice(0, 2), ["ca", "cb"]);
+  // The overlay must show only the bench: no rare entry anywhere,
+  // and the hint must say the common-only choice is in effect.
+  const shown = [...g.doc.querySelector(".kch-list").children].map((li) => li.textContent);
+  assert.deepEqual(shown, ["ca", "cb"]);
+  assert.match(g.doc.querySelector(".kch-hint").textContent, /common only/);
 });
 
 test("party typing is always lowercase, whatever the list spelling", async (t) => {
