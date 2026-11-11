@@ -163,17 +163,24 @@
     return [...names].slice(-40);
   }
 
-  // Remember what this extension left in the box when a turn or
-  // round ends, so the next turn can tell that leftover from fresh
-  // player text. Captures the exact box text when it is this
-  // extension's draft — a finished answer, or a prefix of one
-  // still being typed when time ran out. Text matching nothing
-  // this extension was working on is never captured. Returns
+  // Remember what was left in the box when a turn or round ends,
+  // so the next turn can tell that leftover from fresh player text.
+  // With anyText, records whatever is in the box: at the moment a
+  // turn ends, the box can only hold the previous turn's text,
+  // including a word the player typed themself and never submitted
+  // — which no draft record identifies, and which previously read
+  // as fresh player text forever. Without it (a round change, where
+  // the player may already be typing for the new prompt), only
+  // text matching this extension's draft is recorded. Returns
   // whether prevBoxText was (re)set by this call.
-  function captureLeftover() {
+  function captureLeftover(anyText) {
     const input = partyInput();
     const draft = state.typingFor || state.filledForUser || state.awaitingResult;
     const box = input ? input.value : "";
+    if (anyText && box) {
+      state.prevBoxText = box;
+      return true;
+    }
     if (
       box && draft &&
       (norm(box) === norm(draft) || draft.startsWith(box) ||
@@ -313,25 +320,6 @@
   function fillInput(input, text) {
     nativeSetter.call(input, text);
     input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-
-  // Whether box text is this extension's leftover, not fresh player
-  // text: it matches the draft being typed or submitted, the
-  // remembered leftover, or a list entry already said or rejected.
-  function isOwnLeftover(boxText) {
-    if (!boxText) return false;
-    const draft = state.typingFor || state.filledForUser || state.awaitingResult;
-    if (
-      draft &&
-      (norm(boxText) === norm(draft) || draft.startsWith(boxText) ||
-        boxText.startsWith(draft) || norm(draft).startsWith(norm(boxText)))
-    ) {
-      return true;
-    }
-    if (state.prevBoxText && norm(boxText) === norm(state.prevBoxText)) return true;
-    return displayList().some(
-      (c) => norm(c) === norm(boxText) && (state.said.has(norm(c)) || isRejected(c)),
-    );
   }
 
   function submitForm(form) {
@@ -960,18 +948,15 @@
     const myTurn = isMyTurn(input);
     if (!myTurn) {
       if (state.wasMyTurn) {
-        // Time ran out / the turn passed. Identify the leftover
-        // before cancelTyping drops typingFor, then clear this
-        // extension's wrong answer from the box so it cannot
-        // carry into the next turn. Only text identified as this
-        // extension's leftover is cleared; anything else in the
-        // box is left alone. The stale-box check on the next
-        // turn is the backup if this clear does not stick.
+        // Time ran out / the turn passed. Whatever is in the box
+        // is the previous turn's text — record it, then clear it
+        // so it cannot carry into the next turn. The stale-box
+        // check on the next turn is the backup if this clear
+        // does not stick.
         const live = partyInput();
-        const own = live && isOwnLeftover(live.value);
-        captureLeftover();
+        const captured = captureLeftover(true);
         cancelTyping();
-        if (own && live && live.value) fillInput(live, "");
+        if (captured && live && live.value) fillInput(live, "");
       }
       state.wasMyTurn = false;
       // An attempted answer counts as used even if its bubble was
@@ -1133,10 +1118,12 @@
       // would corrupt it, so clear and type the whole word fresh.
       if (norm(candidate).startsWith(norm(input.value)) && norm(input.value).length > 0) {
         fillInput(input, "");
-      } else if (state.prevBoxText && norm(input.value) === norm(state.prevBoxText)) {
+      } else if (state.prevBoxText && (norm(input.value) === norm(state.prevBoxText) || norm(state.prevBoxText).startsWith(norm(input.value)) || norm(input.value).startsWith(norm(state.prevBoxText)))) {
         // Leftover from the previous round: the game keeps the last
-        // submitted answer in the box, and it is not this round's
-        // candidate. Clear exactly that text once, then type. Anything
+        // answer in the box, and it is not this round's candidate.
+        // A norm-prefix either way still counts: the game may have
+        // autocorrected the leftover between turns ("apples" to
+        // "apple"). Clear exactly that text once, then type. Anything
         // else in the box is the player's own text: never overwrite it.
         state.prevBoxText = null;
         fillInput(input, "");
@@ -1166,12 +1153,11 @@
     if (!prompt) {
       if (state.roundKey !== null) {
         // A prompt-free gap between categories must not wipe the
-        // leftover's identity: identify and clear it here, before
-        // the state below is cleared, or the next category treats
-        // it as text the player typed.
+        // leftover's identity: record whatever is in the box and
+        // clear it here, before the state below is cleared, or the
+        // next category treats it as text the player typed.
         const live = partyInput();
-        const own = state.wasMyTurn && live && isOwnLeftover(live.value);
-        captureLeftover();
+        const captured = state.wasMyTurn && captureLeftover(true);
         cancelTyping();
         state.wasMyTurn = false;
         state.awaitingResult = null;
@@ -1180,7 +1166,7 @@
         state.candidates = [];
         state.rare = [];
         state.common = [];
-        if (own && live && live.value) fillInput(live, "");
+        if (captured && live && live.value) fillInput(live, "");
         setStatus("waiting for a prompt");
       }
       return;

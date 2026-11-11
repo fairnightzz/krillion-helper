@@ -498,6 +498,32 @@ test("a draft cancelled mid-word is deleted when the turn passes", async (t) => 
   await waitFor(() => g.submittedTexts.includes("12345678"), 8000, "draft retyped and submitted next turn");
 });
 
+test("a word the player typed and never submitted is deleted when time runs out", async (t) => {
+  const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submits >= 1, 5000, "first submit");
+  // The player types their own word into the cleared box and never
+  // presses Enter before the fuse runs out. No draft record
+  // identifies it, so the turn-end delete must treat whatever is
+  // in the box as the previous turn's text.
+  g.input._v = "zz";
+  g.setMyTurn(false);
+  await sleep(800);
+  assert.equal(g.input.value, "", "player-typed leftover must be deleted at turn end");
+  g.setMyTurn(true);
+  await waitFor(() => g.submittedTexts.includes("cd"), 8000, "fresh candidate submitted next turn");
+});
+
+test("fresh player text at the start of a turn is never overwritten", async (t) => {
+  const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  g.input._v = "zz";
+  await sleep(2500);
+  assert.equal(g.input.value, "zz");
+  assert.equal(g.submittedTexts.length, 0);
+  assert.match(g.doc.querySelector(".kch-status").textContent, /your text/);
+});
+
 test("a prompt-free gap does not make the leftover look player-typed", async (t) => {
   const g = setup({
     responder: (msg) =>
