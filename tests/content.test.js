@@ -610,6 +610,13 @@ test("common-only types from the common bench and never the rare list", async (t
   assert.match(g.doc.querySelector(".kch-hint").textContent, /common only/);
 });
 
+test("party typing folds accents to plain letters", async (t) => {
+  const g = setup({ responder: sectionResponder(["Crème Brûlée", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.length >= 1, 8000, "folded submit");
+  assert.equal(g.submittedTexts[0], "creme brulee");
+});
+
 test("party typing is always lowercase, whatever the list spelling", async (t) => {
   const g = setup({ responder: sectionResponder(["Battleship Gray", "Cd"], ["Ef", "Gh"]) });
   t.after(() => g.teardown());
@@ -746,6 +753,14 @@ test("solo filling is always lowercase, whatever the list spelling", async (t) =
   t.after(() => g.teardown());
   await waitFor(() => g.submitted.length >= 1, 5000, "solo submit");
   assert.equal(g.submitted[0], "udon");
+  assert.equal(g.clicks, 1);
+});
+
+test("solo filling folds accents to plain letters", async (t) => {
+  const g = setupSolo({ candidates: ["Café", "Ramen"] });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submitted.length >= 1, 5000, "solo folded submit");
+  assert.equal(g.submitted[0], "cafe");
   assert.equal(g.clicks, 1);
 });
 

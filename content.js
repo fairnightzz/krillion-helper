@@ -136,6 +136,26 @@
       .map(canonicalWord)
       .join("");
 
+  // Strip accents and special letters for TYPING only: "Crème
+  // brûlée" is typed as "creme brulee", "Pokémon" as "pokemon".
+  // Unlike norm(), this keeps spaces and punctuation and never
+  // re-spells words, so the typed text stays the candidate itself
+  // in plain letters. The stored and shown spelling is unchanged.
+  // Only Latin-script letters fold; other scripts pass through.
+  const foldAccents = (s) =>
+    String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[æÆ]/g, "ae")
+      .replace(/[œŒ]/g, "oe")
+      .replace(/ß|ẞ/g, "ss")
+      .replace(/[øØ]/g, "o")
+      .replace(/[łŁ]/g, "l")
+      .replace(/[đĐ]/g, "d")
+      .replace(/[þÞ]/g, "th")
+      .replace(/[ðÐ]/g, "d")
+      .replace(/ı/g, "i");
+
   // Variant-aware rejection check: "Battleship grey" counts as the
   // rejected "Battleship gray", and vice versa.
   function isRejected(text) {
@@ -1106,7 +1126,7 @@
     // Always type lowercase: no Shift keys, and the game's matching
     // is case-insensitive. The stored list keeps its spelling for
     // display and for readable refetch excludes.
-    if (candidate) candidate = candidate.toLowerCase();
+    if (candidate) candidate = foldAccents(candidate.toLowerCase());
     if (!candidate) {
       setStatus("out of candidates");
       return;
@@ -1287,9 +1307,10 @@
 
     if (settings.mode === "fill") {
       if (state.filledForUser !== candidate) {
-        // Always type lowercase; the stored candidate keeps its
-        // spelling for rejection tracking and refetch excludes.
-        fillInput(input, candidate.toLowerCase());
+        // Always type lowercase, plain letters; the stored
+        // candidate keeps its spelling for rejection tracking and
+        // refetch excludes.
+        fillInput(input, foldAccents(candidate.toLowerCase()));
         state.filledForUser = candidate;
         state.lastSubmitted = candidate; // so a rejection advances the list
         state.submittedAt = Date.now() + 1e9; // never auto-timeout in fill mode
@@ -1299,7 +1320,7 @@
     }
 
     // auto mode
-    fillInput(input, candidate.toLowerCase());
+    fillInput(input, foldAccents(candidate.toLowerCase()));
     state.lastSubmitted = candidate;
     state.submittedAt = Date.now();
     setStatus('submitting "' + candidate + '"');
