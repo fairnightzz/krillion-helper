@@ -61,11 +61,13 @@ is never reported as wrong:
 - `rejected` — the banner said "no echo" (or gave no usable reason):
   the answer is not in the game's set.
 
-An answer auto-hides from served lists after **three** rejections
-with zero acceptances and zero duplicates. One duplicate or one
-acceptance vetoes auto-hiding outright, so conflicting evidence
-never removes an answer on its own. Manual deletion always wins
-and survives regeneration.
+An answer auto-hides from served lists after a **single**
+rejection with zero acceptances and zero duplicates: the game's
+verdict is deterministic, and the banner is local to the
+submitting player, so one report is already attributed. One
+duplicate or one acceptance vetoes auto-hiding outright, so
+conflicting evidence never removes an answer on its own. Manual
+deletion always wins and survives regeneration.
 
 ## API
 

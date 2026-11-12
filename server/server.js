@@ -99,12 +99,15 @@ function openDb(dbPath) {
   return db;
 }
 
-// Auto-hide rule: hide an answer only on repeated, uncontested
-// rejection. A duplicate or an acceptance confirms the answer is
-// in the game's set, so either one vetoes auto-hiding outright.
+// Auto-hide rule: one uncontested rejection is enough — the
+// game's verdict is deterministic, and the banner is local to
+// the submitting player, so the report is already attributed.
+// A duplicate or an acceptance confirms the answer is in the
+// game's set, so either one vetoes auto-hiding outright; a lone
+// rejection only hides an answer with no evidence for it at all.
 function isAutoHidden(agg) {
   if (!agg) return false;
-  return agg.rejected >= 3 && agg.accepted === 0 && agg.duplicate === 0;
+  return agg.rejected >= 1 && agg.accepted === 0 && agg.duplicate === 0;
 }
 
 function feedbackAggregates(db, promptId) {

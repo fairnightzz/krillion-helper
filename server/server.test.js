@@ -68,7 +68,7 @@ test("storing the same answers twice does not duplicate them", async (t) => {
   assert.deepEqual(hit.body.common, ["Pho"]);
 });
 
-test("feedback auto-hides after three uncontested rejections; a duplicate vetoes it", async (t) => {
+test("feedback auto-hides after one uncontested rejection; acceptances and duplicates veto it", async (t) => {
   const base = await start(t);
   const prompt = "Name a noodle dish";
   const q = encodeURIComponent(prompt);
@@ -81,20 +81,24 @@ test("feedback auto-hides after three uncontested rejections; a duplicate vetoes
     body: JSON.stringify({ prompt, wordStyle: "rare", party: true, text, outcome, source: "own" }),
   });
   await feedback("Udon", "rejected");
-  await feedback("Udon", "rejected");
   let hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
-  assert.deepEqual(hit.body.rare, ["Udon", "Ramen"]);
-  await feedback("Udon", "rejected");
-  hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
   assert.deepEqual(hit.body.rare, ["Ramen"]);
   await feedback("Udon", "duplicate");
   hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
   assert.deepEqual(hit.body.rare, ["Udon", "Ramen"]);
+  await feedback("Ramen", "accepted");
+  await feedback("Ramen", "rejected");
+  hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.deepEqual(hit.body.rare, ["Udon", "Ramen"]);
   const stats = await req(base, `/api/stats?prompt=${q}&wordStyle=rare&party=true`);
   const udon = stats.body.answers.find((a) => a.text === "Udon");
-  assert.equal(udon.rejected, 3);
+  assert.equal(udon.rejected, 1);
   assert.equal(udon.duplicate, 1);
   assert.equal(udon.autoHidden, false);
+  const ramen = stats.body.answers.find((a) => a.text === "Ramen");
+  assert.equal(ramen.accepted, 1);
+  assert.equal(ramen.rejected, 1);
+  assert.equal(ramen.autoHidden, false);
 });
 
 test("manual delete hides one answer; deleting a prompt removes it", async (t) => {
@@ -138,8 +142,9 @@ test("keys normalize prompts and fold answer text", () => {
   assert.equal(textKey("Crème Brûlée"), "cremebrulee");
   assert.equal(textKey("Battleship Gray"), textKey("battleship gray"));
   assert.notEqual(textKey("Battleship Gray"), textKey("Battleship Grey"));
+  assert.equal(isAutoHidden({ accepted: 0, duplicate: 0, rejected: 1 }), true);
   assert.equal(isAutoHidden({ accepted: 0, duplicate: 0, rejected: 3 }), true);
   assert.equal(isAutoHidden({ accepted: 0, duplicate: 1, rejected: 3 }), false);
   assert.equal(isAutoHidden({ accepted: 1, duplicate: 0, rejected: 3 }), false);
-  assert.equal(isAutoHidden({ accepted: 0, duplicate: 0, rejected: 2 }), false);
+  assert.equal(isAutoHidden({ accepted: 0, duplicate: 0, rejected: 0 }), false);
 });
