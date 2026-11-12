@@ -666,8 +666,12 @@ test("regeneration is not blocked once the two lists total 60", async (t) => {
     initialBubbles: bubbles,
   });
   t.after(() => g.teardown());
-  await waitFor(() => g.calls.some((c) => c.kind), 9000, "a refetch with a kind");
-  assert.ok(g.calls.some((c) => c.kind === "both" || c.kind === "rare" || c.kind === "common"));
+  // Scope the probe to getAnswers messages: logEvent messages
+  // also carry a `kind` field (a game-event kind), so an unscoped
+  // probe would match the first log line instead of the refetch.
+  const fetches = () => g.calls.filter((c) => c.type === "getAnswers");
+  await waitFor(() => fetches().some((c) => c.kind), 9000, "a refetch with a kind");
+  assert.ok(fetches().some((c) => c.kind === "both" || c.kind === "rare" || c.kind === "common"));
 });
 
 test("the same category and prompt in a new room resets to the rare list", async (t) => {
@@ -1027,4 +1031,37 @@ test("only opponent krillion-tier bubbles are promoted, once, from --cc", async 
   // Bubbles persist across ticks: the same evidence promotes once.
   await sleep(700);
   assert.equal(g.calls.filter((c) => c.type === "promoteKrillion").length, 2);
+});
+
+test("game events are logged and relayed to the server log", async (t) => {
+  const g = setup({
+    responder: (msg) =>
+      msg.type === "getAnswers"
+        ? { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] }
+        : { ok: true },
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submits >= 1, 5000, "first submit");
+  const el = g.doc.createElement("div");
+  el.classList.add("pf-say", "on", "ok");
+  el.textContent = "Zork";
+  el.style.setProperty("--cc", "var(--tier-krillion, #ffd166)");
+  el.setAttribute("style", "left: 0px; bottom: -109px; --cc: var(--tier-krillion, #ffd166);");
+  g.root.appendChild(el);
+  await sleep(1000);
+  const logEvents = g.calls.filter((c) => c.type === "logEvent");
+  const kinds = logEvents.map((c) => c.kind);
+  for (const kind of ["fetch_result", "typing_start", "typing_done", "submit_attempt", "bubble_seen", "outcome_reported", "promote_sent"]) {
+    assert.ok(kinds.includes(kind), `missing logEvent ${kind}`);
+  }
+  const fetchEvent = logEvents.find((c) => c.kind === "fetch_result");
+  assert.equal(fetchEvent.detail.cached, false);
+  assert.equal(fetchEvent.prompt, "Name a noodle dish");
+  const bubble = logEvents.find((c) => c.kind === "bubble_seen" && c.text === "Zork");
+  assert.ok(bubble);
+  assert.equal(bubble.detail.tier, "krillion");
+  assert.ok(logEvents.some((c) => c.kind === "outcome_reported" && c.text === "Zork" && c.detail.outcome === "accepted"));
+  // Bubbles persist across ticks: first sighting logs once.
+  await sleep(700);
+  assert.equal(g.calls.filter((c) => c.type === "logEvent" && c.kind === "bubble_seen" && c.text === "Zork").length, 1);
 });

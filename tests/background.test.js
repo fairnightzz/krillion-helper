@@ -6,6 +6,17 @@ const vm = require("node:vm");
 
 function loadWorker({ settings, responses, fastTimers }) {
   const calls = [];
+  // The worker logs [kch-log] lines to the console; capture them
+  // (and forward them) so logging behaviour is assertable.
+  const logs = [];
+  const testConsole = {
+    log: (...a) => {
+      logs.push(a);
+      console.log(...a);
+    },
+    warn: (...a) => console.warn(...a),
+    error: (...a) => console.error(...a),
+  };
   let queue = [...responses];
   const fetchStub = async (url, opts) => {
     const body = opts && opts.body ? JSON.parse(opts.body) : null;
@@ -21,7 +32,7 @@ function loadWorker({ settings, responses, fastTimers }) {
   };
   const realSetTimeout = setTimeout;
   const ctx = vm.createContext({
-    console,
+    console: testConsole,
     AbortController,
     fetch: fetchStub,
     setTimeout: fastTimers
@@ -41,7 +52,7 @@ function loadWorker({ settings, responses, fastTimers }) {
     const out = await vm.runInContext(`__getAnswers(${JSON.stringify(req)})`, ctx);
     return JSON.parse(JSON.stringify(out));
   };
-  return { calls, ctx, ask };
+  return { calls, ctx, ask, logs };
 }
 
 function textReply(text, extra) {
@@ -289,6 +300,44 @@ test("getCacheStats without a server URL explains itself without fetching", asyn
   });
   assert.equal(answer.ok, false);
   assert.equal(w.calls.length, 0);
+});
+
+test("cache hits and misses are logged with the cached flag", async () => {
+  const hasKind = (w, kind) => w.logs.some((a) => a[0] === "[kch-log]" && a[1] && a[1].kind === kind);
+  const hit = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://cache.test" },
+    responses: [{ status: 200, json: { cached: true, rare: ["Udon"], common: ["Pho"], candidates: ["Udon", "Pho"], model: "m", usage: {} } }],
+  });
+  const out = await hit.ask({ prompt: "Name a noodle dish", exclude: [], party: true });
+  assert.equal(out.cached, true);
+  assert.ok(hasKind(hit, "cache_hit"));
+  const miss = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://cache.test" },
+    responses: [{ status: 404, json: { cached: false } }, textReply("Udon\nRamen\n")],
+  });
+  const out2 = await miss.ask({ prompt: "Name a noodle dish", exclude: [], party: false });
+  assert.deepEqual(out2.candidates, ["Udon", "Ramen"]);
+  assert.ok(hasKind(miss, "cache_miss"));
+});
+
+test("logEvent relays known game events to the server log and drops unknown kinds", async () => {
+  const w = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://cache.test", serverToken: "tok" },
+    responses: [{ status: 200, json: { ok: true } }],
+  });
+  const answer = await new Promise((resolve) => {
+    w.ctx.__listener({ type: "logEvent", kind: "bubble_seen", prompt: "Name a noodle dish", text: "Zork", detail: { tier: "krillion" } }, {}, resolve);
+  });
+  assert.equal(answer.ok, true);
+  assert.equal(w.calls.length, 1);
+  assert.ok(w.calls[0].url.endsWith("/api/events"));
+  assert.equal(w.calls[0].body.kind, "bubble_seen");
+  assert.equal(w.calls[0].headers["x-kch-token"], "tok");
+  const dropped = await new Promise((resolve) => {
+    w.ctx.__listener({ type: "logEvent", kind: "bogus", prompt: "x" }, {}, resolve);
+  });
+  assert.equal(dropped.ok, false);
+  assert.equal(w.calls.length, 1);
 });
 
 test("the sent system prompt prefers established acronyms and forbids inventing them", async () => {

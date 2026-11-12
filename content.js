@@ -346,6 +346,7 @@
   }
 
   function submitForm(form) {
+    elog("solo_submit", { text: state.lastSubmitted || null });
     // Let React commit the state update from the input event first.
     setTimeout(() => {
       const btn = $(".ds-dive-btn", form);
@@ -488,11 +489,12 @@
   // A blocked auto-Enter used to fail silently (the overlay kept
   // saying the answer was typed). Record the reason in the overlay and
   // the console so a live failure says which guard stopped it.
-  function blockSubmit(reason) {
+  function blockSubmit(reason, candidate) {
     state.enterDiag = "auto-Enter blocked: " + reason;
     state.enterDiagAt = Date.now();
     setStatus(state.enterDiag);
     console.warn("[kch] " + state.enterDiag);
+    elog("submit_blocked", { text: candidate || null, reason });
     return false;
   }
   function attemptPartySubmit(input, candidate, key) {
@@ -502,20 +504,21 @@
     // itself still holds the finished answer.
     const live = partyInput();
     input = live && document.contains(live) ? live : input;
-    if (state.roundKey !== key) return blockSubmit("round changed");
-    if (!settings.enabled) return blockSubmit("helper is disabled");
+    if (state.roundKey !== key) return blockSubmit("round changed", candidate);
+    if (!settings.enabled) return blockSubmit("helper is disabled", candidate);
     // Re-checked at fire time, not just at schedule time: the user may
     // have switched Mode while the Enter timer was pending.
-    if (settings.mode !== "auto") return blockSubmit("mode is not auto");
-    if (!isMyTurn(input)) return blockSubmit("not my turn");
-    if (!input || !document.contains(input)) return blockSubmit("no input");
-    if (norm(input.value) !== norm(candidate)) return blockSubmit("box changed");
-    if (state.said.has(norm(candidate)) || isRejected(candidate)) return blockSubmit("answer already used");
+    if (settings.mode !== "auto") return blockSubmit("mode is not auto", candidate);
+    if (!isMyTurn(input)) return blockSubmit("not my turn", candidate);
+    if (!input || !document.contains(input)) return blockSubmit("no input", candidate);
+    if (norm(input.value) !== norm(candidate)) return blockSubmit("box changed", candidate);
+    if (state.said.has(norm(candidate)) || isRejected(candidate)) return blockSubmit("answer already used", candidate);
     const dock = $(".pf-root .ds-dock");
     const btn = dock ? $(".ds-dive-btn", dock) : null;
     state.awaitingResult = input.value.trim();
     state.awaitingAt = Date.now();
     setStatus('submitting "' + candidate + '"');
+    elog("submit_attempt", { text: candidate, via: btn && !btn.disabled ? "button" : "enter" });
     let dispatched = false;
     let usedButton = false;
     if (btn && !btn.disabled) {
@@ -583,14 +586,17 @@
     });
     state.typing = handle;
     state.typingFor = candidate;
+    elog("typing_start", { text: candidate });
     handle.done.then((ok) => {
       if (state.typing !== handle) return;
       state.typing = null;
+      if (!ok) elog("typing_aborted", { text: candidate });
       // On abort, keep typingFor: the abandoned draft still identifies
       // what this extension typed, so the dead-candidate recovery in
       // partyAutoTick can clear it. Cleared by cancelTyping,
       // resetRound, or the next startTyping.
       if (ok && state.roundKey === key) {
+        elog("typing_done", { text: candidate });
         state.typingFor = null;
         state.filledForUser = candidate;
         if (settings.mode === "auto") {
@@ -619,6 +625,32 @@
   // Whether a bubble shows this extension's own in-flight or
   // submitted answer: those outcomes belong to the banner and
   // turn-pass paths, never to the bubble inference below.
+  // One log line per game event, in two places at once: the page
+  // console (filter for [kch-log]) and the server event log via
+  // the worker, where it persists and is queryable. Best-effort
+  // and never blocking: logging must not change what the game
+  // does. Keystrokes are never logged individually, only typing
+  // start/done per candidate.
+  function elog(kind, fields) {
+    const entry = {
+      ts: new Date().toISOString(),
+      kind,
+      prompt: (fields && fields.prompt) || state.prompt || null,
+      ...(fields || {}),
+    };
+    try {
+      console.log("[kch-log]", entry);
+    } catch (_) {}
+    try {
+      chrome.runtime.sendMessage({
+        type: "logEvent",
+        kind,
+        prompt: entry.prompt,
+        text: entry.text != null ? entry.text : null,
+        detail: entry,
+      }, () => { void chrome.runtime.lastError; });
+    } catch (_) {}
+  }
   function isOwnAnswer(text) {
     const key = norm(text);
     if (!key) return false;
@@ -632,6 +664,7 @@
     const key = norm(text) + "|" + outcome;
     if (state.reportedOutcomes.has(key)) return;
     state.reportedOutcomes.add(key);
+    elog("outcome_reported", { text, outcome, source: source || "banner" });
     chrome.runtime.sendMessage({
       type: "reportOutcome",
       prompt: state.prompt,
@@ -655,13 +688,19 @@
   // toasts are not tied to a bubble. Read the property first
   // and fall back to the style attribute, which carries the
   // same declaration.
-  function isKrillionBubble(el) {
+  // The tier name from a bubble's --cc property, or "" when it
+  // carries none: "krillion", "plankton", and so on.
+  function bubbleTier(el) {
     let cc = "";
     try {
       if (el.style && typeof el.style.getPropertyValue === "function") cc = el.style.getPropertyValue("--cc") || "";
     } catch (_) {}
     if (!cc && el && typeof el.getAttribute === "function") cc = el.getAttribute("style") || "";
-    return /\btier-krillion\b/.test(cc);
+    const m = cc.match(/\btier-([a-z]+)\b/);
+    return m ? m[1] : "";
+  }
+  function isKrillionBubble(el) {
+    return bubbleTier(el) === "krillion";
   }
   // Learn an opponent's krillion-tier answer into the cache's
   // rare list (server-side, nestled at index 4). One promotion
@@ -673,6 +712,7 @@
     const key = norm(text);
     if (state.promotedKrillions.has(key)) return;
     state.promotedKrillions.add(key);
+    elog("promote_sent", { text });
     chrome.runtime.sendMessage({
       type: "promoteKrillion",
       prompt: state.prompt,
@@ -702,9 +742,18 @@
       state.fetching = false;
       if (chrome.runtime.lastError || !res || !res.ok) {
         state.error = (chrome.runtime.lastError && chrome.runtime.lastError.message) || (res && res.error) || "unknown error";
+        elog("fetch_error", { kind: kind || null, error: state.error });
         render();
         return;
       }
+      elog("fetch_result", {
+        kind: kind || null,
+        cached: res.cached === true,
+        rare: Array.isArray(res.rare) ? res.rare.length : null,
+        common: Array.isArray(res.common) ? res.common.length : null,
+        candidates: Array.isArray(res.candidates) ? res.candidates.length : null,
+        model: res.model || null,
+      });
       if (isParty() && (Array.isArray(res.rare) || Array.isArray(res.common))) {
         const have = new Set(displayList().map(norm));
         const freshRare = (res.rare || []).filter((x) => !have.has(norm(x)));
@@ -1019,6 +1068,7 @@
     document.querySelectorAll(".pf-say.on:not(.bad):not(.caret)").forEach((el) => {
       const t = norm(el.textContent);
       if (t && !state.said.has(t)) {
+        elog("bubble_seen", { text: el.textContent, tier: bubbleTier(el) || null, outcome: "accepted" });
         markSaid(el.textContent, el.textContent);
         state.confirmed.add(t);
         changed = true;
@@ -1052,7 +1102,10 @@
         if (!isOwnAnswer(el.textContent)) reportOutcome(el.textContent, "duplicate", "other");
         return;
       }
-      if (!state.said.has(t)) { markSaid(el.textContent, el.textContent); changed = true; }
+      if (!state.said.has(t)) {
+        elog("bubble_seen", { text: el.textContent, tier: bubbleTier(el) || null, outcome: "bad", confirmed: state.confirmed.has(t) });
+        markSaid(el.textContent, el.textContent); changed = true;
+      }
     });
     // Reject banner: “x”: already said  /  “x”: no echo. keep going
     const rej = $(".ds-reject");
@@ -1110,7 +1163,10 @@
         const live = partyInput();
         const captured = captureLeftover(true);
         cancelTyping();
-        if (captured && live && live.value) fillInput(live, "");
+        if (captured && live && live.value) {
+          elog("leftover_cleared", { text: live.value });
+          fillInput(live, "");
+        }
       }
       state.wasMyTurn = false;
       // An attempted answer counts as used even if its bubble was

@@ -428,6 +428,27 @@ async function serverRequest(settings, path, opts) {
   return json;
 }
 
+// Game-event kinds the content script may relay to the server
+// log with POST /api/events. Keep in sync with GAME_EVENT_KINDS
+// in server.js. The worker logs its own cache activity to the
+// console only; the server records those same requests itself.
+const LOG_EVENT_KINDS = new Set([
+  "fetch_result", "fetch_error",
+  "typing_start", "typing_done", "typing_aborted",
+  "submit_attempt", "submit_blocked", "solo_submit",
+  "bubble_seen", "outcome_reported", "promote_sent",
+  "leftover_cleared",
+]);
+
+// Worker-side log line, for the service-worker console (tail it
+// in chrome://extensions under Inspect views). One line per
+// event, prefixed for filtering; never throws.
+function elog(kind, fields) {
+  try {
+    console.log("[kch-log]", { ts: new Date().toISOString(), kind, ...(fields || {}) });
+  } catch (_) {}
+}
+
 function cacheWordStyle(req, settings) {
   return req.wordStyle === "common" ? "common" : settings.wordStyle === "common" ? "common" : "rare";
 }
@@ -473,7 +494,7 @@ async function fetchCache(settings, req) {
 async function storeCache(settings, req, result, rawText) {
   const wordStyle = cacheWordStyle(req, settings);
   const party = !!req.party;
-  await serverRequest(settings, "/api/answers", {
+  return serverRequest(settings, "/api/answers", {
     method: "POST",
     body: JSON.stringify({
       prompt: req.prompt, wordStyle, party,
@@ -500,15 +521,45 @@ async function reportFeedback(msg) {
   const base = serverBase(settings);
   if (!base) return false;
   if (typeof msg.prompt !== "string" || typeof msg.text !== "string") return false;
-  await serverRequest(settings, "/api/feedback", {
+  const fields = {
+    prompt: msg.prompt, text: msg.text,
+    outcome: msg.outcome, source: msg.source || "banner",
+  };
+  try {
+    await serverRequest(settings, "/api/feedback", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: msg.prompt,
+        wordStyle: msg.wordStyle === "common" ? "common" : "rare",
+        party: typeof msg.party === "boolean" ? msg.party : true,
+        text: msg.text,
+        outcome: msg.outcome,
+        source: msg.source || "banner",
+      }),
+    });
+  } catch (e) {
+    elog("feedback_error", { ...fields, error: e.message || String(e) });
+    throw e;
+  }
+  elog("feedback_sent", fields);
+  return true;
+}
+
+// Relay one content-script game event to the server log.
+// Best-effort: the game never waits on it, and unknown kinds are
+// dropped without a request.
+async function logEvent(msg) {
+  const settings = await getSettings();
+  if (settings.enabled === false) return false;
+  if (!serverBase(settings)) return false;
+  if (!msg || typeof msg.kind !== "string" || !LOG_EVENT_KINDS.has(msg.kind)) return false;
+  if (msg.prompt !== undefined && msg.prompt !== null && typeof msg.prompt !== "string") return false;
+  if (msg.text !== undefined && msg.text !== null && typeof msg.text !== "string") return false;
+  if (msg.detail !== undefined && msg.detail !== null && (typeof msg.detail !== "object" || Array.isArray(msg.detail))) return false;
+  await serverRequest(settings, "/api/events", {
     method: "POST",
     body: JSON.stringify({
-      prompt: msg.prompt,
-      wordStyle: msg.wordStyle === "common" ? "common" : "rare",
-      party: typeof msg.party === "boolean" ? msg.party : true,
-      text: msg.text,
-      outcome: msg.outcome,
-      source: msg.source || "banner",
+      kind: msg.kind, prompt: msg.prompt ?? null, text: msg.text ?? null, detail: msg.detail ?? null,
     }),
   });
   return true;
@@ -523,10 +574,16 @@ async function promoteKrillion(msg) {
   const base = serverBase(settings);
   if (!base) return false;
   if (typeof msg.prompt !== "string" || typeof msg.text !== "string") return false;
-  await serverRequest(settings, "/api/promote", {
-    method: "POST",
-    body: JSON.stringify({ prompt: msg.prompt, text: msg.text, tier: "krillion" }),
-  });
+  try {
+    await serverRequest(settings, "/api/promote", {
+      method: "POST",
+      body: JSON.stringify({ prompt: msg.prompt, text: msg.text, tier: "krillion" }),
+    });
+  } catch (e) {
+    elog("promote_error", { prompt: msg.prompt, text: msg.text, error: e.message || String(e) });
+    throw e;
+  }
+  elog("promote_sent", { prompt: msg.prompt, text: msg.text });
   return true;
 }
 
@@ -536,10 +593,22 @@ async function getAnswers(req) {
 
   // Cache first: a warm cache needs no API key at all. Any cache
   // failure is a miss and falls through to Anthropic below.
+  const wordStyle = cacheWordStyle(req, settings);
+  const party = !!req.party;
   try {
     const cached = await fetchCache(settings, req);
-    if (cached) return cached;
-  } catch (_) {
+    if (cached) {
+      elog("cache_hit", {
+        prompt: req.prompt, wordStyle, party, cached: true,
+        rare: cached.rare ? cached.rare.length : null,
+        common: cached.common ? cached.common.length : null,
+        candidates: cached.candidates ? cached.candidates.length : null,
+      });
+      return cached;
+    }
+    elog("cache_miss", { prompt: req.prompt, wordStyle, party, cached: false });
+  } catch (e) {
+    elog("cache_error", { prompt: req.prompt, wordStyle, party, error: e.message || String(e) });
     // Fall through to Anthropic.
   }
   if (!settings.apiKey) throw new Error("No API key set. Click the extension icon to add one.");
@@ -592,13 +661,29 @@ async function getAnswers(req) {
     const candidates = [...rare, ...common];
     if (!candidates.length) throw new Error("no usable candidates returned.");
     const result = { candidates, rare, common, model: json.model, usage: json.usage };
-    try { await storeCache(settings, req, result, text); } catch (_) {}
+    let stored = null;
+    try {
+      const storedRes = await storeCache(settings, req, result, text);
+      stored = storedRes && storedRes.stored != null ? storedRes.stored : null;
+    } catch (_) {}
+    elog("api_answer", {
+      prompt: req.prompt, wordStyle, party, cached: false,
+      model: json.model, candidates: candidates.length, rare: rare.length, common: common.length, stored,
+    });
     return result;
   }
   const candidates = parseCandidates(text, req.exclude);
   if (!candidates.length) throw new Error("no usable candidates returned.");
   const result = { candidates, model: json.model, usage: json.usage };
-  try { await storeCache(settings, req, result, text); } catch (_) {}
+  let stored = null;
+  try {
+    const storedRes = await storeCache(settings, req, result, text);
+    stored = storedRes && storedRes.stored != null ? storedRes.stored : null;
+  } catch (_) {}
+  elog("api_answer", {
+    prompt: req.prompt, wordStyle, party, cached: false,
+    model: json.model, candidates: candidates.length, stored,
+  });
   return result;
 }
 
@@ -640,6 +725,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // Best-effort learning; the game result never waits on it
     // beyond this response.
     promoteKrillion(msg)
+      .then((ok) => sendResponse({ ok }))
+      .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
+    return true;
+  }
+  if (msg?.type === "logEvent") {
+    // Best-effort relay of one content-script game event to the
+    // server log; the game never waits on it beyond this response.
+    logEvent(msg)
       .then((ok) => sendResponse({ ok }))
       .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
     return true;

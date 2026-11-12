@@ -77,6 +77,35 @@ the extension promotes it into the rare list, nestled at index 4
 No other tier is promoted, and seat yellowness never counts: it is
 the spare-life flash, not a tier signal.
 
+## Event log
+
+Every cache request and every game event is logged twice: once as a
+row in the `events` table (SQLite, newest 100,000 kept) and once as
+a single JSON line on stdout, so the same history is queryable later
+and tail-able live with `docker logs -f krillion-helper-cache`. The
+extension also prints each game event to the page and worker
+consoles prefixed `[kch-log]`. Logging never blocks a request or a
+turn. Individual keystrokes are never logged, only typing
+start/done per candidate.
+
+Server-side kinds: `cache_hit`, `cache_miss` (detail `reason`:
+`no_entry` or `exhausted`), `cache_store`, `feedback`, `promote`,
+`delete_answer`, `delete_prompt`, `unauthorized`, `error`.
+Game-event kinds relayed by the extension: `fetch_result`
+(detail `cached`, counts, and `model`), `fetch_error`,
+`typing_start`, `typing_done`, `typing_aborted`,
+`submit_attempt`, `submit_blocked`, `solo_submit`, `bubble_seen`
+(detail `tier` and `outcome`), `outcome_reported`, `promote_sent`,
+`leftover_cleared`.
+
+```sh
+# Newest 100 events, or filtered by kind, prompt substring, or text
+curl "localhost:8787/api/events?limit=100" -H "X-KCH-Token: $KCH_TOKEN"
+curl "localhost:8787/api/events?kind=cache_hit&limit=50" -H "X-KCH-Token: $KCH_TOKEN"
+curl "localhost:8787/api/events?prompt=Name%20a%20type%20of%20salt" -H "X-KCH-Token: $KCH_TOKEN"
+curl "localhost:8787/api/events?kind=bubble_seen&text=Zork" -H "X-KCH-Token: $KCH_TOKEN"
+```
+
 ## API
 
 All `/api/*` routes require `X-KCH-Token` when `KCH_TOKEN` is set
@@ -100,6 +129,9 @@ curl -X POST localhost:8787/api/feedback -H "X-KCH-Token: $KCH_TOKEN" -H 'Conten
 # Promote an opponent's krillion-tier answer into the rare list at index 4 (other tiers: 400)
 curl -X POST localhost:8787/api/promote -H "X-KCH-Token: $KCH_TOKEN" -H 'Content-Type: application/json' \
   -d '{"prompt":"Name a noodle dish","text":"Udon","tier":"krillion"}'
+
+# Read the event log (newest first; see "Event log" above)
+curl "localhost:8787/api/events?limit=100" -H "X-KCH-Token: $KCH_TOKEN"
 
 # Inspect prompts, per-answer stats, and curate by hand
 curl "localhost:8787/api/prompts" -H "X-KCH-Token: $KCH_TOKEN"

@@ -36,7 +36,7 @@ The typing is human-like in pacing, not in provenance: it types one keystroke at
 
 ## Answer cache server
 
-`server/` holds a small storage-only answer cache (SQLite, Dockerized): the extension checks it first for a prompt it has seen before and only calls Claude on a miss, then stores the generated lists. Answers are keyed by normalized prompt, word style, and game. Outcomes from play curate the cache automatically: duplicates and acceptances confirm an answer, while an answer auto-hides after a single rejection with no acceptance or duplicate; manual deletion always wins. If the server is down or unconfigured, the extension falls back to Claude directly. See [server/README.md](/Users/zhehai/Downloads/krillion-helper/server/README.md) for running it, the API, and curation rules.
+`server/` holds a small storage-only answer cache (SQLite, Dockerized): the extension checks it first for a prompt it has seen before and only calls Claude on a miss, then stores the generated lists. Answers are keyed by normalized prompt, word style, and game. Outcomes from play curate the cache automatically: duplicates and acceptances confirm an answer, while an answer auto-hides after a single rejection with no acceptance or duplicate; manual deletion always wins. If the server is down or unconfigured, the extension falls back to Claude directly. Every cache request and game event is also logged to the server's event log and to stdout/console (see [server/README.md](/Users/zhehai/Downloads/krillion-helper/server/README.md) for running it, the API, curation rules, and the event log).
 
 ## Tests
 

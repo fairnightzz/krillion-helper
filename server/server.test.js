@@ -220,3 +220,72 @@ test("promote inserts only a krillion answer at rare index 4, dedups, and never 
   const freshHit = await req(base, "/api/answers?prompt=" + encodeURIComponent("Name a fresh dish") + "&wordStyle=rare&party=true");
   assert.deepEqual(freshHit.body.rare, ["FirstKrillion"]);
 });
+
+test("events record cache hits, misses, stores, feedback, and promotes, and are queryable", async (t) => {
+  const base = await start(t);
+  const prompt = "Log probe dish";
+  const q = encodeURIComponent(prompt);
+  const miss = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.equal(miss.status, 404);
+  const stored = await req(base, "/api/answers", {
+    method: "POST",
+    body: JSON.stringify({ prompt, wordStyle: "rare", party: true, rare: ["Udon"], common: ["Pho"] }),
+  });
+  assert.equal(stored.body.stored, 2);
+  const hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.equal(hit.status, 200);
+  await req(base, "/api/feedback", {
+    method: "POST",
+    body: JSON.stringify({ prompt, wordStyle: "rare", party: true, text: "Udon", outcome: "rejected", source: "own" }),
+  });
+  const promoted = await req(base, "/api/promote", {
+    method: "POST",
+    body: JSON.stringify({ prompt, text: "LogKrillion", tier: "krillion" }),
+  });
+  assert.equal(promoted.body.stored, true);
+  // Game events from the extension are accepted only for known kinds.
+  assert.equal((await req(base, "/api/events", {
+    method: "POST",
+    body: JSON.stringify({ kind: "bogus", prompt, text: "Zork" }),
+  })).status, 400);
+  assert.equal((await req(base, "/api/events", {
+    method: "POST",
+    body: JSON.stringify({ kind: "bubble_seen", prompt, text: "Zork", detail: { tier: "krillion" } }),
+  })).status, 200);
+  const all = await req(base, "/api/events?limit=100");
+  assert.equal(all.status, 200);
+  const kinds = all.body.events.map((e) => e.kind);
+  for (const kind of ["cache_miss", "cache_store", "cache_hit", "feedback", "promote", "bubble_seen"]) {
+    assert.ok(kinds.includes(kind), `missing ${kind}`);
+  }
+  // Newest first.
+  assert.equal(all.body.events[0].kind, "bubble_seen");
+  const hitEvent = all.body.events.find((e) => e.kind === "cache_hit");
+  assert.equal(hitEvent.prompt, prompt);
+  assert.equal(hitEvent.detail.rare, 1);
+  assert.equal(hitEvent.detail.common, 1);
+  assert.equal(hitEvent.detail.candidates, 2);
+  const missEvent = all.body.events.find((e) => e.kind === "cache_miss");
+  assert.equal(missEvent.detail.reason, "no_entry");
+  const feedbackEvent = all.body.events.find((e) => e.kind === "feedback");
+  assert.equal(feedbackEvent.text, "Udon");
+  assert.equal(feedbackEvent.detail.outcome, "rejected");
+  const promoteEvent = all.body.events.find((e) => e.kind === "promote");
+  assert.equal(promoteEvent.detail.stored, true);
+  assert.equal(promoteEvent.detail.position, 1);
+  const bubbleEvent = all.body.events.find((e) => e.kind === "bubble_seen");
+  assert.equal(bubbleEvent.text, "Zork");
+  assert.equal(bubbleEvent.detail.tier, "krillion");
+  // Filters: kind, prompt substring, and limit.
+  const hitsOnly = await req(base, "/api/events?kind=cache_hit");
+  assert.ok(hitsOnly.body.events.length >= 1);
+  assert.ok(hitsOnly.body.events.every((e) => e.kind === "cache_hit"));
+  const byPrompt = await req(base, "/api/events?prompt=" + encodeURIComponent("Log probe"));
+  assert.ok(byPrompt.body.events.length >= 1);
+  assert.ok(byPrompt.body.events.every((e) => e.prompt.includes("Log probe")));
+  const limited = await req(base, "/api/events?limit=2");
+  assert.equal(limited.body.events.length, 2);
+  // The events endpoint needs the token like every other /api route.
+  const noToken = await fetch(base + "/api/events");
+  assert.equal(noToken.status, 401);
+});

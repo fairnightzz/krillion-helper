@@ -20,6 +20,18 @@ try {
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_TEXT_LEN = 256;
+// The event log keeps the newest events and prunes the rest, so
+// collecting a lot of logs cannot grow the database without bound.
+const MAX_EVENTS = 100000;
+// Game-event kinds the extension may relay with POST /api/events.
+// Keep in sync with LOG_EVENT_KINDS in background.js.
+const GAME_EVENT_KINDS = new Set([
+  "fetch_result", "fetch_error",
+  "typing_start", "typing_done", "typing_aborted",
+  "submit_attempt", "submit_blocked", "solo_submit",
+  "bubble_seen", "outcome_reported", "promote_sent",
+  "leftover_cleared",
+]);
 
 // Cache key for a prompt: case, spacing, and trailing punctuation
 // must not create a second copy of the same question.
@@ -95,6 +107,15 @@ function openDb(dbPath) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_feedback_prompt_key ON feedback(prompt_id, text_key);
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      prompt_text TEXT,
+      text TEXT,
+      detail TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind, id);
   `);
   return db;
 }
@@ -134,6 +155,36 @@ function visibleLists(db, promptId) {
     if (lists[row.list_kind]) lists[row.list_kind].push(row.text);
   }
   return lists;
+}
+
+// One event log for the whole system: every record is persisted
+// in SQLite and echoed as one JSON line on stdout, so the same
+// history is tail-able in `docker logs` and queryable later via
+// GET /api/events. Logging never breaks a request: any failure
+// here is swallowed, and the caller still gets its answer.
+function recordEvent(db, kind, fields) {
+  const createdAt = nowIso();
+  const detail = fields && fields.detail !== undefined ? fields.detail : null;
+  try {
+    db.prepare(
+      "INSERT INTO events (created_at, kind, prompt_text, text, detail) VALUES (?, ?, ?, ?, ?)",
+    ).run(createdAt, kind, (fields && fields.prompt_text) || null, (fields && fields.text) || null,
+      detail == null ? null : JSON.stringify(detail));
+    const count = db.prepare("SELECT COUNT(*) AS n FROM events").get().n;
+    if (count > MAX_EVENTS) {
+      db.prepare("DELETE FROM events WHERE id IN (SELECT id FROM events ORDER BY id ASC LIMIT ?)")
+        .run(count - MAX_EVENTS);
+    }
+  } catch (_) {}
+  try {
+    console.log(JSON.stringify({
+      ts: createdAt,
+      kind,
+      prompt: (fields && fields.prompt_text) || undefined,
+      text: (fields && fields.text) || undefined,
+      ...(detail && typeof detail === "object" && !Array.isArray(detail) ? detail : {}),
+    }));
+  } catch (_) {}
 }
 
 function sendJson(res, status, obj) {
@@ -284,6 +335,7 @@ async function handleRequest(db, token, req, res) {
     return sendJson(res, 404, { error: "not found" });
   }
   if (!checkAuth(req, token)) {
+    recordEvent(db, "unauthorized", { detail: { path: url.pathname, method: req.method } });
     return sendJson(res, 401, { error: "unauthorized" });
   }
   try {
@@ -295,10 +347,20 @@ async function handleRequest(db, token, req, res) {
         return sendJson(res, 400, { error: "prompt, wordStyle, and party are required" });
       }
       const row = findPrompt(db, prompt, wordStyle, party);
-      if (!row) return sendJson(res, 404, { cached: false, error: "no cached answers" });
+      if (!row) {
+        recordEvent(db, "cache_miss", { prompt_text: String(prompt).trim(), detail: { wordStyle, party, reason: "no_entry" } });
+        return sendJson(res, 404, { cached: false, error: "no cached answers" });
+      }
       const lists = visibleLists(db, row.id);
       const candidates = party ? [...lists.rare, ...lists.common] : lists.solo;
-      if (!candidates.length) return sendJson(res, 404, { cached: false, error: "no cached answers" });
+      if (!candidates.length) {
+        recordEvent(db, "cache_miss", { prompt_text: row.prompt_text, detail: { wordStyle, party, reason: "exhausted" } });
+        return sendJson(res, 404, { cached: false, error: "no cached answers" });
+      }
+      recordEvent(db, "cache_hit", {
+        prompt_text: row.prompt_text,
+        detail: { wordStyle, party, rare: lists.rare.length, common: lists.common.length, candidates: candidates.length },
+      });
       return sendJson(res, 200, {
         cached: true, prompt: row.prompt_text, wordStyle, party,
         rare: lists.rare, common: lists.common, candidates,
@@ -326,6 +388,10 @@ async function handleRequest(db, token, req, res) {
       const row = upsertPrompt(db, body.prompt, wordStyle, party, body.model, body.rawText);
       const lists = party ? { rare, common } : { solo: candidates };
       const stored = storeLists(db, row, lists);
+      recordEvent(db, "cache_store", {
+        prompt_text: row.prompt_text,
+        detail: { wordStyle, party, stored, model: body.model || null },
+      });
       return sendJson(res, 200, { ok: true, stored, promptId: row.id });
     }
 
@@ -344,6 +410,11 @@ async function handleRequest(db, token, req, res) {
       db.prepare(
         "INSERT INTO feedback (prompt_id, text, text_key, outcome, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       ).run(row.id, body.text.trim(), textKey(body.text), body.outcome, source, nowIso());
+      recordEvent(db, "feedback", {
+        prompt_text: row.prompt_text,
+        text: body.text.trim(),
+        detail: { wordStyle, party, outcome: body.outcome, source },
+      });
       return sendJson(res, 200, { ok: true });
     }
 
@@ -356,7 +427,66 @@ async function handleRequest(db, token, req, res) {
       }
       const row = upsertPrompt(db, body.prompt, "rare", true, undefined, undefined);
       const result = promoteKrillion(db, row, body.text.trim());
+      recordEvent(db, "promote", {
+        prompt_text: row.prompt_text,
+        text: body.text.trim(),
+        detail: { ...result },
+      });
       return sendJson(res, 200, { ok: true, ...result });
+    }
+
+    if (url.pathname === "/api/events" && req.method === "POST") {
+      const body = await readJson(req);
+      if (!body.kind || typeof body.kind !== "string" || !GAME_EVENT_KINDS.has(body.kind) ||
+          (body.prompt !== undefined && body.prompt !== null && typeof body.prompt !== "string") ||
+          (body.text !== undefined && body.text !== null && typeof body.text !== "string") ||
+          (typeof body.prompt === "string" && body.prompt.length > MAX_TEXT_LEN) ||
+          (typeof body.text === "string" && body.text.length > MAX_TEXT_LEN) ||
+          (body.detail !== undefined && body.detail !== null && (typeof body.detail !== "object" || Array.isArray(body.detail)))) {
+        return sendJson(res, 400, { error: "kind, prompt, text, and detail are required" });
+      }
+      // The event itself is the record: one row and one stdout line.
+      recordEvent(db, body.kind, {
+        prompt_text: body.prompt || null,
+        text: body.text || null,
+        detail: body.detail || null,
+      });
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/api/events" && req.method === "GET") {
+      let limit = parseInt(url.searchParams.get("limit") || "100", 10);
+      if (!Number.isFinite(limit)) limit = 100;
+      limit = Math.min(1000, Math.max(1, limit));
+      const where = [];
+      const params = [];
+      const kind = url.searchParams.get("kind");
+      const promptFilter = url.searchParams.get("prompt");
+      const textFilter = url.searchParams.get("text");
+      if (kind) {
+        where.push("kind = ?");
+        params.push(kind);
+      }
+      if (promptFilter) {
+        where.push("prompt_text LIKE ?");
+        params.push("%" + promptFilter + "%");
+      }
+      if (textFilter) {
+        where.push("text LIKE ?");
+        params.push("%" + textFilter + "%");
+      }
+      const rows = db.prepare(
+        "SELECT id, created_at, kind, prompt_text, text, detail FROM events" +
+        (where.length ? " WHERE " + where.join(" AND ") : "") +
+        " ORDER BY id DESC LIMIT ?",
+      ).all(...params, limit);
+      return sendJson(res, 200, {
+        events: rows.map((r) => ({
+          id: r.id, createdAt: r.created_at, kind: r.kind,
+          prompt: r.prompt_text, text: r.text,
+          detail: r.detail ? JSON.parse(r.detail) : null,
+        })),
+      });
     }
 
     if (url.pathname === "/api/prompts" && req.method === "GET") {
@@ -415,6 +545,11 @@ async function handleRequest(db, token, req, res) {
       const info = db.prepare(
         "UPDATE entries SET removed = 1 WHERE prompt_id = ? AND text_key = ?",
       ).run(row.id, textKey(text));
+      recordEvent(db, "delete_answer", {
+        prompt_text: row.prompt_text,
+        text: text.trim(),
+        detail: { wordStyle, party, removed: info.changes },
+      });
       return sendJson(res, 200, { ok: true, removed: info.changes });
     }
 
@@ -429,11 +564,16 @@ async function handleRequest(db, token, req, res) {
         "DELETE FROM prompts WHERE prompt_key = ? AND word_style = ? AND party = ?",
       ).run(promptKey(prompt), wordStyle, party ? 1 : 0);
       if (info.changes === 0) return sendJson(res, 404, { error: "no such prompt" });
+      recordEvent(db, "delete_prompt", {
+        prompt_text: String(prompt).trim(),
+        detail: { wordStyle, party, deleted: true },
+      });
       return sendJson(res, 200, { ok: true, deleted: true });
     }
 
     return sendJson(res, 404, { error: "not found" });
   } catch (e) {
+    recordEvent(db, "error", { detail: { path: url.pathname, method: req.method, error: e.message || "internal error" } });
     return sendJson(res, e.status || 500, { error: e.message || "internal error" });
   }
 }
