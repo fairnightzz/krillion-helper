@@ -148,3 +148,75 @@ test("keys normalize prompts and fold answer text", () => {
   assert.equal(isAutoHidden({ accepted: 1, duplicate: 0, rejected: 3 }), false);
   assert.equal(isAutoHidden({ accepted: 0, duplicate: 0, rejected: 0 }), false);
 });
+
+test("promote inserts only a krillion answer at rare index 4, dedups, and never resurrects removed ones", async (t) => {
+  const base = await start(t);
+  const prompt = "Name a noodle dish";
+  const q = encodeURIComponent(prompt);
+  const rare12 = Array.from({ length: 12 }, (_, i) => `Rare${i + 1}`);
+  await req(base, "/api/answers", {
+    method: "POST",
+    body: JSON.stringify({ prompt, wordStyle: "rare", party: true, rare: rare12, common: ["Pho", "Pad thai"] }),
+  });
+  const promote = (text, tier) => req(base, "/api/promote", {
+    method: "POST",
+    body: JSON.stringify({ prompt, text, tier }),
+  });
+  // Only the krillion tier is learnable; other tiers are rejected.
+  assert.equal((await promote("PlanktonWord", "plankton")).status, 400);
+  assert.equal((await promote("SchoolerWord", "schooler")).status, 400);
+  const first = await promote("KrillionWord", "krillion");
+  assert.equal(first.status, 200);
+  assert.equal(first.body.stored, true);
+  assert.equal(first.body.position, 4);
+  let hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.equal(hit.body.rare.length, 13);
+  assert.equal(hit.body.rare[4], "KrillionWord");
+  assert.deepEqual(hit.body.rare.slice(0, 4), rare12.slice(0, 4));
+  assert.deepEqual(hit.body.rare.slice(5), rare12.slice(4));
+  assert.deepEqual(hit.body.common, ["Pho", "Pad thai"]);
+  // A second promotion of the same word is a no-op, not a duplicate.
+  const again = await promote("KRILLIONWORD", "krillion");
+  assert.equal(again.body.stored, false);
+  assert.equal(again.body.already, true);
+  hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.equal(hit.body.rare.filter((w) => w === "KrillionWord").length, 1);
+  // A short rare list appends at the end: still within the top 5.
+  const shortPrompt = "Name a short dish";
+  const sq = encodeURIComponent(shortPrompt);
+  await req(base, "/api/answers", {
+    method: "POST",
+    body: JSON.stringify({ prompt: shortPrompt, wordStyle: "rare", party: true, rare: ["One", "Two"], common: [] }),
+  });
+  const short = await req(base, "/api/promote", {
+    method: "POST",
+    body: JSON.stringify({ prompt: shortPrompt, text: "ShortKrillion", tier: "krillion" }),
+  });
+  assert.equal(short.body.position, 2);
+  const shortHit = await req(base, `/api/answers?prompt=${sq}&wordStyle=rare&party=true`);
+  assert.deepEqual(shortHit.body.rare, ["One", "Two", "ShortKrillion"]);
+  // A word already in the common bench moves to rare index 4.
+  const moved = await promote("Pho", "krillion");
+  assert.equal(moved.body.stored, true);
+  assert.equal(moved.body.position, 4);
+  hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.equal(hit.body.rare[4], "Pho");
+  assert.deepEqual(hit.body.common, ["Pad thai"]);
+  // A manually removed word is never resurrected by promotion.
+  await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true&text=${encodeURIComponent("Pad thai")}`, { method: "DELETE" });
+  const removed = await promote("Pad thai", "krillion");
+  assert.equal(removed.body.stored, false);
+  assert.equal(removed.body.removed, true);
+  hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.ok(!hit.body.common.includes("Pad thai"));
+  assert.ok(!hit.body.rare.includes("Pad thai"));
+  // Promotion creates a prompt row when there is none yet.
+  const fresh = await req(base, "/api/promote", {
+    method: "POST",
+    body: JSON.stringify({ prompt: "Name a fresh dish", text: "FirstKrillion", tier: "krillion" }),
+  });
+  assert.equal(fresh.body.stored, true);
+  assert.equal(fresh.body.position, 0);
+  const freshHit = await req(base, "/api/answers?prompt=" + encodeURIComponent("Name a fresh dish") + "&wordStyle=rare&party=true");
+  assert.deepEqual(freshHit.body.rare, ["FirstKrillion"]);
+});

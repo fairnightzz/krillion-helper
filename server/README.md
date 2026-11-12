@@ -69,6 +69,14 @@ duplicate or one acceptance vetoes auto-hiding outright, so
 conflicting evidence never removes an answer on its own. Manual
 deletion always wins and survives regeneration.
 
+Opponent answers are otherwise never learned — except one narrow
+case. An opponent answer whose own speech bubble carries
+`--cc: var(--tier-krillion, …)` was a one-in-a-krillion answer, so
+the extension promotes it into the rare list, nestled at index 4
+(5th place; shorter lists append at the end, still in the top 5).
+No other tier is promoted, and seat yellowness never counts: it is
+the spare-life flash, not a tier signal.
+
 ## API
 
 All `/api/*` routes require `X-KCH-Token` when `KCH_TOKEN` is set
@@ -88,6 +96,10 @@ curl -X POST localhost:8787/api/answers -H "X-KCH-Token: $KCH_TOKEN" -H 'Content
 # Report an outcome
 curl -X POST localhost:8787/api/feedback -H "X-KCH-Token: $KCH_TOKEN" -H 'Content-Type: application/json' \
   -d '{"prompt":"Name a noodle dish","wordStyle":"rare","party":true,"text":"Udon","outcome":"rejected","source":"banner"}'
+
+# Promote an opponent's krillion-tier answer into the rare list at index 4 (other tiers: 400)
+curl -X POST localhost:8787/api/promote -H "X-KCH-Token: $KCH_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"prompt":"Name a noodle dish","text":"Udon","tier":"krillion"}'
 
 # Inspect prompts, per-answer stats, and curate by hand
 curl "localhost:8787/api/prompts" -H "X-KCH-Token: $KCH_TOKEN"

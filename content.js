@@ -51,6 +51,7 @@
     confirmed: new Set(), // party: answers positively confirmed in the set this round
     saidForms: new Map(), // party: norm -> readable form first seen, for refetch excludes
     reportedOutcomes: new Set(), // party: norm|outcome pairs already reported this round
+    promotedKrillions: new Set(), // party: norms already promoted this round
     copied: null,
     copiedTimer: null,
     partyFetchAt: 0,    // last party candidate fetch, for the refetch cooldown
@@ -647,6 +648,38 @@
   // (count it toward removal). Any other phrasing is a rejection:
   // the banner only appears when the game refused the answer.
   // "Signal lost" is a network blip, not a verdict: no outcome.
+  // The tier of an accepted answer lives on its own bubble as
+  // the --cc custom property: var(--tier-krillion, #ffd166) for a
+  // one-in-a-krillion answer. Nothing else counts: seat gold is
+  // the spare-life flash and winner sprite, and /tiers/*.png
+  // toasts are not tied to a bubble. Read the property first
+  // and fall back to the style attribute, which carries the
+  // same declaration.
+  function isKrillionBubble(el) {
+    let cc = "";
+    try {
+      if (el.style && typeof el.style.getPropertyValue === "function") cc = el.style.getPropertyValue("--cc") || "";
+    } catch (_) {}
+    if (!cc && el && typeof el.getAttribute === "function") cc = el.getAttribute("style") || "";
+    return /\btier-krillion\b/.test(cc);
+  }
+  // Learn an opponent's krillion-tier answer into the cache's
+  // rare list (server-side, nestled at index 4). One promotion
+  // per word per round: bubbles persist across ticks. The
+  // acceptance itself is still reported by the caller, so the
+  // cache also records it as accepted for curation.
+  function promoteKrillion(text) {
+    if (!text || !state.prompt) return;
+    const key = norm(text);
+    if (state.promotedKrillions.has(key)) return;
+    state.promotedKrillions.add(key);
+    chrome.runtime.sendMessage({
+      type: "promoteKrillion",
+      prompt: state.prompt,
+      text,
+      tier: "krillion",
+    }, () => { void chrome.runtime.lastError; });
+  }
   function parseRejectOutcome(rejText) {
     if (/signal lost/i.test(rejText)) return null;
     const m = rejText.match(/[“"](.+?)[”"]/);
@@ -776,6 +809,7 @@
       confirmed: new Set(),
       saidForms: new Map(),
       reportedOutcomes: new Set(),
+      promotedKrillions: new Set(),
       copied: null,
     });
     fetchCandidates(prompt, []);
@@ -990,7 +1024,12 @@
         changed = true;
         // A shown answer from another player was accepted: the
         // bubble carries no reason, but acceptance needs none.
-        if (!isOwnAnswer(el.textContent)) reportOutcome(el.textContent, "accepted", "other");
+        // A krillion-tier bubble is additionally learned into the
+        // cache's rare list; every other tier is only reported.
+        if (!isOwnAnswer(el.textContent)) {
+          reportOutcome(el.textContent, "accepted", "other");
+          if (isKrillionBubble(el)) promoteKrillion(el.textContent);
+        }
       }
     });
     // Rejected answers ("bad" bubbles) count as tried too, for every

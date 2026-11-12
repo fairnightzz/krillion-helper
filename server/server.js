@@ -229,6 +229,39 @@ function storeLists(db, promptRow, lists) {
   return stored;
 }
 
+// Learn one opponent answer: a krillion-tier acceptance only.
+// The answer joins the rare list nestled at index 4 (5th place),
+// pushing the rest of the rare list down one. Shorter lists append
+// at the end, still inside the top 5. Dedup is by text key; an
+// answer already in the common bench moves to rare; a manually
+// removed answer is never resurrected. The prompt row is always
+// the rare party row: krillion answers are rare-list knowledge,
+// whatever word style the player currently uses.
+function promoteKrillion(db, promptRow, text) {
+  const key = textKey(text);
+  const now = nowIso();
+  const existing = db.prepare(
+    "SELECT * FROM entries WHERE prompt_id = ? AND text_key = ?",
+  ).get(promptRow.id, key);
+  if (existing && existing.removed === 1) return { stored: false, removed: true };
+  if (existing && existing.list_kind !== "common") {
+    return { stored: false, already: true, position: existing.position };
+  }
+  const countRow = db.prepare(
+    "SELECT COUNT(*) AS n FROM entries WHERE prompt_id = ? AND list_kind = 'rare' AND removed = 0",
+  ).get(promptRow.id);
+  const position = Math.min(4, countRow.n);
+  db.prepare(
+    "UPDATE entries SET position = position + 1 WHERE prompt_id = ? AND list_kind = 'rare' AND removed = 0 AND position >= ?",
+  ).run(promptRow.id, position);
+  if (existing) db.prepare("DELETE FROM entries WHERE id = ?").run(existing.id);
+  db.prepare(
+    "INSERT INTO entries (prompt_id, list_kind, position, text, text_key, created_at) VALUES (?, 'rare', ?, ?, ?, ?)",
+  ).run(promptRow.id, position, text.trim(), key, now);
+  db.prepare("UPDATE prompts SET updated_at = ? WHERE id = ?").run(now, promptRow.id);
+  return { stored: true, position };
+}
+
 function parseWordStyle(value) {
   if (value === undefined) return "rare";
   if (value === "rare" || value === "common") return value;
@@ -312,6 +345,18 @@ async function handleRequest(db, token, req, res) {
         "INSERT INTO feedback (prompt_id, text, text_key, outcome, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       ).run(row.id, body.text.trim(), textKey(body.text), body.outcome, source, nowIso());
       return sendJson(res, 200, { ok: true });
+    }
+
+    if (url.pathname === "/api/promote" && req.method === "POST") {
+      const body = await readJson(req);
+      if (!body.prompt || typeof body.prompt !== "string" || !promptKey(body.prompt) ||
+          !body.text || typeof body.text !== "string" || !body.text.trim() || body.text.trim().length > MAX_TEXT_LEN ||
+          body.tier !== "krillion") {
+        return sendJson(res, 400, { error: "prompt, text, and tier 'krillion' are required" });
+      }
+      const row = upsertPrompt(db, body.prompt, "rare", true, undefined, undefined);
+      const result = promoteKrillion(db, row, body.text.trim());
+      return sendJson(res, 200, { ok: true, ...result });
     }
 
     if (url.pathname === "/api/prompts" && req.method === "GET") {

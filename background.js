@@ -514,6 +514,22 @@ async function reportFeedback(msg) {
   return true;
 }
 
+// Best-effort krillion promotion: learn an opponent's
+// one-in-a-krillion answer into the cache's rare list. The server
+// enforces the tier and the position; the worker only relays.
+async function promoteKrillion(msg) {
+  const settings = await getSettings();
+  if (settings.enabled === false) return false;
+  const base = serverBase(settings);
+  if (!base) return false;
+  if (typeof msg.prompt !== "string" || typeof msg.text !== "string") return false;
+  await serverRequest(settings, "/api/promote", {
+    method: "POST",
+    body: JSON.stringify({ prompt: msg.prompt, text: msg.text, tier: "krillion" }),
+  });
+  return true;
+}
+
 async function getAnswers(req) {
   const settings = await getSettings();
   if (settings.enabled === false) throw new Error("Krillion Helper is disabled. Turn it on in the extension popup.");
@@ -616,6 +632,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // Best-effort outcome reporting for server curation; the
     // game result never waits on it beyond this response.
     reportFeedback(msg)
+      .then((ok) => sendResponse({ ok }))
+      .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
+    return true;
+  }
+  if (msg?.type === "promoteKrillion") {
+    // Best-effort learning; the game result never waits on it
+    // beyond this response.
+    promoteKrillion(msg)
       .then((ok) => sendResponse({ ok }))
       .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
     return true;

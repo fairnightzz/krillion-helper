@@ -85,7 +85,17 @@ class El {
       contains: (c) => this._classes.has(c),
     };
     this.dataset = {};
-    this.style = {};
+    // The game's tier signal is the --cc custom property on a
+    // bubble; support get/setProperty like CSSStyleDeclaration.
+    this.style = {
+      _vars: {},
+      getPropertyValue(name) {
+        return this._vars[name] || "";
+      },
+      setProperty(name, value) {
+        this._vars[name] = String(value);
+      },
+    };
     this.attributes = {};
     this._text = "";
     this.disabled = false;
@@ -283,6 +293,11 @@ function buildDoc({ rated, myTurn, prompt, category, initialBubbles, endButtons 
     const el = doc.createElement("div");
     el.classList.add("pf-say", "on", bub.cls);
     el.textContent = bub.text;
+    if (bub.tier) {
+      const cc = `var(--tier-${bub.tier}, #8fa3c4)`;
+      el.style.setProperty("--cc", cc);
+      el.setAttribute("style", `left: 0px; bottom: -109px; --cc: ${cc};`);
+    }
     root.appendChild(el);
   }
   let endButton = null;
@@ -974,4 +989,42 @@ test("when only long answers remain, the shortest usable one is typed", async (t
   t.after(() => g.teardown());
   await waitFor(() => g.submittedTexts.length >= 1, 8000, "long fallback submit");
   assert.equal(g.submittedTexts[0], "abcdefghijklmnopqrstu");
+});
+
+test("only opponent krillion-tier bubbles are promoted, once, from --cc", async (t) => {
+  const g = setup({
+    responder: (msg) =>
+      msg.type === "getAnswers"
+        ? { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] }
+        : { ok: true },
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submits >= 1, 5000, "first submit");
+  // "ab" was just submitted by this extension: its own krillion
+  // bubble must not promote. "quux" is a bad bubble, not an
+  // acceptance, even with a krillion --cc on it. Seat or toast
+  // signals are never consulted: only the bubble's own --cc.
+  const addBubble = ({ text, cls, tier, attrOnly }) => {
+    const el = g.doc.createElement("div");
+    el.classList.add("pf-say", "on", cls);
+    el.textContent = text;
+    const cc = `var(--tier-${tier}, #8fa3c4)`;
+    if (!attrOnly) el.style.setProperty("--cc", cc);
+    el.setAttribute("style", `left: 0px; bottom: -109px; --cc: ${cc};`);
+    g.root.appendChild(el);
+  };
+  addBubble({ text: "Zork", cls: "ok", tier: "krillion" });
+  addBubble({ text: "Vex", cls: "ok", tier: "krillion", attrOnly: true });
+  addBubble({ text: "Sweden", cls: "ok", tier: "plankton" });
+  addBubble({ text: "ab", cls: "ok", tier: "krillion" });
+  addBubble({ text: "Quux", cls: "bad", tier: "krillion" });
+  await sleep(1000);
+  const promotes = g.calls.filter((c) => c.type === "promoteKrillion");
+  assert.deepEqual(promotes.map((c) => c.text).sort(), ["Vex", "Zork"]);
+  assert.ok(promotes.every((c) => c.tier === "krillion" && c.prompt === "Name a noodle dish"));
+  const accepted = g.calls.filter((c) => c.type === "reportOutcome" && c.outcome === "accepted");
+  assert.deepEqual(accepted.map((c) => c.text).sort(), ["Sweden", "Vex", "Zork"]);
+  // Bubbles persist across ticks: the same evidence promotes once.
+  await sleep(700);
+  assert.equal(g.calls.filter((c) => c.type === "promoteKrillion").length, 2);
 });
