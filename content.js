@@ -48,7 +48,9 @@
     error: null,
     status: "idle",
     said: new Set(),      // party: answers already played this category (lowercase)
+    confirmed: new Set(), // party: answers positively confirmed in the set this round
     saidForms: new Map(), // party: norm -> readable form first seen, for refetch excludes
+    reportedOutcomes: new Set(), // party: norm|outcome pairs already reported this round
     copied: null,
     copiedTimer: null,
     partyFetchAt: 0,    // last party candidate fetch, for the refetch cooldown
@@ -613,8 +615,22 @@
   // Duplicates and wrong answers are different outcomes and are
   // reported differently, even though local picking treats both
   // as "do not type again this round".
+  // Whether a bubble shows this extension's own in-flight or
+  // submitted answer: those outcomes belong to the banner and
+  // turn-pass paths, never to the bubble inference below.
+  function isOwnAnswer(text) {
+    const key = norm(text);
+    if (!key) return false;
+    return [state.typingFor, state.filledForUser, state.awaitingResult]
+      .some((v) => v && norm(v) === key);
+  }
+  // One report per word+outcome per round: bubbles persist across
+  // ticks, and the same evidence must not count many times.
   function reportOutcome(text, outcome, source) {
     if (!text || !state.prompt) return;
+    const key = norm(text) + "|" + outcome;
+    if (state.reportedOutcomes.has(key)) return;
+    state.reportedOutcomes.add(key);
     chrome.runtime.sendMessage({
       type: "reportOutcome",
       prompt: state.prompt,
@@ -757,7 +773,9 @@
       enterDiag: null,
       enterDiagAt: 0,
       said: new Set(),
+      confirmed: new Set(),
       saidForms: new Map(),
+      reportedOutcomes: new Set(),
       copied: null,
     });
     fetchCandidates(prompt, []);
@@ -966,14 +984,36 @@
     // answers still count.
     document.querySelectorAll(".pf-say.on:not(.bad):not(.caret)").forEach((el) => {
       const t = norm(el.textContent);
-      if (t && !state.said.has(t)) { markSaid(el.textContent, el.textContent); changed = true; }
+      if (t && !state.said.has(t)) {
+        markSaid(el.textContent, el.textContent);
+        state.confirmed.add(t);
+        changed = true;
+        // A shown answer from another player was accepted: the
+        // bubble carries no reason, but acceptance needs none.
+        if (!isOwnAnswer(el.textContent)) reportOutcome(el.textContent, "accepted", "other");
+      }
     });
     // Rejected answers ("bad" bubbles) count as tried too, for every
     // player: typing one again only earns another rejection. Caret
-    // drafts are still excluded above.
+    // drafts are still excluded above. A bad bubble carries no
+    // reason, so it is only ever evidence of a duplicate: when the
+    // same word was positively confirmed in the set this round
+    // (an accepted bubble or an accepted submit), repeating it
+    // was bound to be rejected as already said. Merely having
+    // seen the word is not enough — the bad bubble itself marks
+    // words said, so that alone would self-confirm on the next
+    // tick. A bad bubble for a word never confirmed is NOT
+    // reported as wrong: it might be a repeat of a word said
+    // before this page loaded, and a wrong report could hide a
+    // valid answer.
     document.querySelectorAll(".pf-say.on.bad").forEach((el) => {
       const t = norm(el.textContent);
-      if (t && !state.said.has(t)) { markSaid(el.textContent, el.textContent); changed = true; }
+      if (!t) return;
+      if (state.confirmed.has(t)) {
+        if (!isOwnAnswer(el.textContent)) reportOutcome(el.textContent, "duplicate", "other");
+        return;
+      }
+      if (!state.said.has(t)) { markSaid(el.textContent, el.textContent); changed = true; }
     });
     // Reject banner: “x”: already said  /  “x”: no echo. keep going
     const rej = $(".ds-reject");
@@ -1044,6 +1084,7 @@
       // turn with the holder and shows the banner instead.
       if (state.awaitingResult) {
         markSaid(state.awaitingResult, state.awaitingResult);
+        state.confirmed.add(norm(state.awaitingResult));
         reportOutcome(state.awaitingResult, "accepted", "own");
       }
       state.filledForUser = null;
@@ -1080,7 +1121,10 @@
       state.awaitingResult = null;
       cancelTyping();
       const parsed = parseRejectOutcome(rejText);
-      if (parsed && parsed.word) reportOutcome(parsed.word, parsed.outcome, "banner");
+      if (parsed && parsed.word) {
+        if (parsed.outcome === "duplicate") state.confirmed.add(norm(parsed.word));
+        reportOutcome(parsed.word, parsed.outcome, "banner");
+      }
       const m = rejText.match(/[“"](.+?)[”"]/);
       if (m) {
         const rejectedText = m[1];

@@ -581,6 +581,51 @@ test("a no-echo rejection is reported as rejected, not as a duplicate", async (t
   assert.equal(reports[0].text, "ra");
 });
 
+test("another player's shown answer is reported as accepted, once", async (t) => {
+  const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  const bubble = g.doc.createElement("div");
+  bubble.classList.add("pf-say", "on");
+  bubble.textContent = "zz";
+  g.root.appendChild(bubble);
+  await sleep(1500);
+  const reports = g.calls.filter((c) => c.type === "reportOutcome" && c.text === "zz");
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome, "accepted");
+  assert.equal(reports[0].source, "other");
+});
+
+test("another player's bad bubble for a word already played is reported as a duplicate", async (t) => {
+  const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submits >= 1, 5000, "first submit");
+  g.setMyTurn(false);
+  await sleep(700);
+  const bubble = g.doc.createElement("div");
+  bubble.classList.add("pf-say", "on", "bad");
+  bubble.textContent = "ab";
+  g.root.appendChild(bubble);
+  await sleep(800);
+  const dups = g.calls.filter((c) => c.type === "reportOutcome" && c.text === "ab" && c.outcome === "duplicate");
+  assert.equal(dups.length, 1);
+  assert.equal(dups[0].source, "other");
+  assert.equal(g.calls.filter((c) => c.type === "reportOutcome" && c.text === "ab" && c.outcome === "rejected").length, 0);
+  await sleep(800);
+  assert.equal(g.calls.filter((c) => c.type === "reportOutcome" && c.text === "ab" && c.outcome === "duplicate").length, 1);
+});
+
+test("another player's bad bubble for an unseen word is never reported as wrong", async (t) => {
+  const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  const bubble = g.doc.createElement("div");
+  bubble.classList.add("pf-say", "on", "bad");
+  bubble.textContent = "qq";
+  g.root.appendChild(bubble);
+  await waitFor(() => g.submittedTexts.length >= 1, 8000, "own submit still happens");
+  assert.equal(g.submittedTexts[0], "ab");
+  assert.equal(g.calls.filter((c) => c.type === "reportOutcome" && c.text === "qq").length, 0);
+});
+
 test("a turn passing without a rejection reports the attempt as accepted", async (t) => {
   const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
   t.after(() => g.teardown());
@@ -911,9 +956,14 @@ test("auto Join next game never clicks Wake the Puffer", async (t) => {
 test("party answers over 20 characters are skipped, including at the 20 boundary", async (t) => {
   const g = setup({ responder: sectionResponder(["abcdefghijklmnopqrstu", "abcdefghijklmnopqrst", "ab"], ["cd"]) });
   t.after(() => g.teardown());
-  // The harness game never acknowledges a submit, so the second
-  // pick waits out the 5s result window after the first (long) word.
-  await waitFor(() => g.submittedTexts.length >= 2, 14000, "short submits");
+  // Pass the turn after the first submit, as a real game does on
+  // acceptance, so the second pick does not wait out the 5s
+  // result window the harness game would otherwise leave open.
+  await waitFor(() => g.submittedTexts.length >= 1, 8000, "first submit");
+  g.setMyTurn(false);
+  await sleep(600);
+  g.setMyTurn(true);
+  await waitFor(() => g.submittedTexts.length >= 2, 8000, "short submits");
   assert.equal(g.submittedTexts[0], "abcdefghijklmnopqrst");
   assert.equal(g.submittedTexts[1], "ab");
   assert.ok(!g.submittedTexts.includes("abcdefghijklmnopqrstu"));

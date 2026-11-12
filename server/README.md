@@ -45,8 +45,14 @@ with the same flag.
 
 ## Curation from play
 
-Outcomes arrive as the extension plays. Only the banner reason and
-turn outcomes are reported, never keystrokes:
+Outcomes arrive as the extension plays. Only game outcomes are
+reported, never keystrokes. For other players, only what every
+client can see is used: a shown answer counts as accepted, and a
+rejected bubble counts as a duplicate only when that word was
+already played this round — the game shows no reason for other
+players' rejections (the "already said" / "no echo" reason arrives
+only for your own answer), so a rejected bubble for an unseen word
+is never reported as wrong:
 
 - `accepted` — the attempt passed the turn (party) or reached the
   feedback phase (solo) without a rejection.
