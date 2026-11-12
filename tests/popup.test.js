@@ -17,7 +17,7 @@ function makeEl() {
   };
 }
 
-function loadPopup({ stored, deferGet, store, failSet, failGet, lsStore, selectOptions, getSnapshot }) {
+function loadPopup({ stored, deferGet, store, failSet, failGet, lsStore, selectOptions, getSnapshot, messageReply }) {
   const elements = {};
   const doc = {
     getElementById(id) {
@@ -79,7 +79,7 @@ function loadPopup({ stored, deferGet, store, failSet, failGet, lsStore, selectO
       lastError: undefined,
       sendMessage(msg, cb) {
         calls.messages.push(msg);
-        if (cb) cb({ ok: true });
+        if (cb) cb(messageReply ? messageReply(msg) : { ok: true });
       },
     },
   };
@@ -208,6 +208,33 @@ test("the cache server token is never written to the localStorage mirror", () =>
   popup.input("apiKey");
   assert.equal("serverToken" in JSON.parse(popup.lsStore["kch-settings"]), false);
   assert.equal(popup.store.serverToken, "tok-secret");
+});
+
+test("Check cache shows how many prompts and answers are stored", () => {
+  const popup = loadPopup({
+    stored: {},
+    messageReply: () => ({
+      ok: true,
+      prompts: [
+        { prompt: "Name a noodle dish", rare: 2, common: 1, solo: 0 },
+        { prompt: "Name a fruit", rare: 1, common: 1, solo: 0 },
+      ],
+    }),
+  });
+  popup.click("cacheCheck");
+  assert.equal(popup.calls.messages.length, 1);
+  assert.equal(popup.calls.messages[0].type, "getCacheStats");
+  assert.match(popup.elements.cacheInfo.textContent, /2 prompts cached, 5 answers/);
+  assert.match(popup.elements.cacheInfo.textContent, /Name a noodle dish/);
+});
+
+test("Check cache shows the empty state", () => {
+  const popup = loadPopup({
+    stored: {},
+    messageReply: () => ({ ok: true, prompts: [] }),
+  });
+  popup.click("cacheCheck");
+  assert.equal(popup.elements.cacheInfo.textContent, "Cache is empty — no prompts stored yet.");
 });
 
 test("disabling the helper persists without clicking Save", () => {

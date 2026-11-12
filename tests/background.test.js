@@ -264,6 +264,33 @@ test("reportOutcome posts the outcome to the cache server", async () => {
   assert.equal(w.calls[0].headers["x-kch-token"], "tok");
 });
 
+test("getCacheStats returns the server prompt list", async () => {
+  const w = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://localhost:8787" },
+    responses: [{ status: 200, json: { prompts: [{ prompt: "Name a noodle dish", rare: 2, common: 1, solo: 0 }] } }],
+  });
+  const answer = await new Promise((resolve) => {
+    w.ctx.__listener({ type: "getCacheStats" }, {}, resolve);
+  });
+  assert.equal(answer.ok, true);
+  assert.equal(answer.prompts.length, 1);
+  assert.equal(answer.prompts[0].prompt, "Name a noodle dish");
+  assert.equal(w.calls.length, 1);
+  assert.ok(w.calls[0].url.includes("/api/prompts"));
+});
+
+test("getCacheStats without a server URL explains itself without fetching", async () => {
+  const w = loadWorker({
+    settings: SETTINGS,
+    responses: [{ status: 200, json: { prompts: [] } }],
+  });
+  const answer = await new Promise((resolve) => {
+    w.ctx.__listener({ type: "getCacheStats" }, {}, resolve);
+  });
+  assert.equal(answer.ok, false);
+  assert.equal(w.calls.length, 0);
+});
+
 test("the sent system prompt prefers established acronyms and forbids inventing them", async () => {
   const w = loadWorker({ settings: SETTINGS, responses: [textReply("PUBG\n")] });
   await w.ask({ prompt: "Name a video game", exclude: [], party: false });

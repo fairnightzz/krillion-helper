@@ -485,6 +485,15 @@ async function storeCache(settings, req, result, rawText) {
   });
 }
 
+async function getCacheStats() {
+  const settings = await getSettings();
+  if (settings.enabled === false) return { ok: false, error: "Krillion Helper is disabled." };
+  const base = serverBase(settings);
+  if (!base) return { ok: false, error: "No cache server URL set." };
+  const json = await serverRequest(settings, "/api/prompts", { method: "GET" });
+  return { ok: true, prompts: json.prompts || [] };
+}
+
 async function reportFeedback(msg) {
   const settings = await getSettings();
   if (settings.enabled === false) return false;
@@ -608,6 +617,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // game result never waits on it beyond this response.
     reportFeedback(msg)
       .then((ok) => sendResponse({ ok }))
+      .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
+    return true;
+  }
+  if (msg?.type === "getCacheStats") {
+    getCacheStats()
+      .then((r) => sendResponse(r))
       .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
     return true;
   }

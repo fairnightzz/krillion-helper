@@ -167,3 +167,28 @@ document.getElementById("test").addEventListener("click", () => {
     else show("Key failed: " + ((r && r.error) || "unknown error"), "err");
   });
 });
+
+// Ask the background worker what the cache server has stored, so
+// accumulation is visible without curl. Uses the saved settings,
+// which autosave as you type.
+document.getElementById("cacheCheck").addEventListener("click", () => {
+  const info = document.getElementById("cacheInfo");
+  info.textContent = "Checking cache…";
+  chrome.runtime.sendMessage({ type: "getCacheStats" }, (r) => {
+    const err = chrome.runtime.lastError;
+    if (err) {
+      info.textContent = "Cache check failed: " + err.message;
+      return;
+    }
+    if (!r || !r.ok) {
+      info.textContent = "Cache check failed: " + ((r && r.error) || "unknown error");
+      return;
+    }
+    const prompts = Array.isArray(r.prompts) ? r.prompts : [];
+    const total = prompts.reduce((n, p) => n + (p.rare || 0) + (p.common || 0) + (p.solo || 0), 0);
+    info.textContent = prompts.length === 0
+      ? "Cache is empty — no prompts stored yet."
+      : prompts.length + " prompt" + (prompts.length === 1 ? "" : "s") + " cached, " + total + " answers: " +
+        prompts.slice(0, 5).map((p) => p.prompt).join(" · ") + (prompts.length > 5 ? " · …" : "");
+  });
+});
