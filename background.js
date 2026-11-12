@@ -62,7 +62,7 @@ Ranking:
   actually rare. Go one level deeper than that.
 - For party games with RARE and COMMON sections, the COMMON section is
   the safe bench: moderately uncommon answers certain to be accepted,
-  rarest first among them. For a single list, make the last few
+  in the order the user message asks for. For a single list, make the last few
   candidates likewise safe fallbacks; the user message says how many.
 
 Output format: one candidate per line, nothing else. No numbering, no bullets,
@@ -93,7 +93,7 @@ function buildUserMessage(prompt, exclude, party, kind, count, wordStyle) {
   if (!party) {
     const soloCount = count == null ? DEFAULTS.candidateCount : count;
     let text = commonOnly
-      ? `Game prompt: "${prompt}"\n\nGive ${soloCount} COMMON candidate answers — moderately uncommon answers certain to be accepted, rarest first among them. Do not include rare or obscure answers.`
+      ? `Game prompt: "${prompt}"\n\nGive ${soloCount} COMMON candidate answers — answers certain to be accepted, most common first. Do not include rare or obscure answers.`
       : `Game prompt: "${prompt}"\n\nGive ${soloCount} candidate answers, rarest first (last 2 are safe fallbacks).`;
     if (exclude && exclude.length) {
       text += `\n\nThese were already REJECTED by the game as not in the answer set, do not repeat them and avoid anything similarly obscure:\n`;
@@ -112,7 +112,7 @@ function buildUserMessage(prompt, exclude, party, kind, count, wordStyle) {
     // pool fills the whole slot count the two lists would have
     // held (12 rare + 10 common) instead of leaving the rare
     // portion empty.
-    text = `Game prompt: "${prompt}"\n\nGive 22 COMMON candidate answers — moderately uncommon answers certain to be accepted, rarest first among them. Output them under a "COMMON:" heading, one per line, and nothing else in that section.`;
+    text = `Game prompt: "${prompt}"\n\nGive 22 COMMON candidate answers, most common first — answers certain to be accepted, from the most widely known down. Output them under a "COMMON:" heading, one per line, and nothing else in that section.`;
   } else if (kind === "rare") {
     text = `Game prompt: "${prompt}"\n\nGive 12 RARE candidate answers, rarest first. Output them under a "RARE:" heading, one per line, and nothing else in that section.`;
   } else if (kind === "common") {

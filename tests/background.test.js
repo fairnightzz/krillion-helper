@@ -170,6 +170,14 @@ test("a disabled helper refuses answer requests without calling the API", async 
   assert.equal(w.calls.length, 0);
 });
 
+test("common-only requests ask most-common-first, in party and solo", async () => {
+  const w = loadWorker({ settings: SETTINGS, responses: [textReply("Pho\nPad thai\n"), textReply("Pho\nPad thai\n")] });
+  await w.ask({ prompt: "Name a noodle dish", exclude: [], party: true, kind: "both", wordStyle: "common" });
+  assert.match(w.calls[0].body.messages[0].content, /most common first/);
+  await w.ask({ prompt: "Name a noodle dish", exclude: [], party: false, wordStyle: "common" });
+  assert.match(w.calls[1].body.messages[0].content, /most common first/);
+});
+
 test("the sent system prompt prefers established acronyms and forbids inventing them", async () => {
   const w = loadWorker({ settings: SETTINGS, responses: [textReply("PUBG\n")] });
   await w.ask({ prompt: "Name a video game", exclude: [], party: false });
