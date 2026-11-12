@@ -32,6 +32,8 @@ const DEFAULTS = {
   autoAdvance: false,
   showOverlay: true,
   candidateCount: 8,
+  serverUrl: "http://localhost:8787", // answer-cache server; blank disables it
+  serverToken: "", // sent as X-KCH-Token when the server requires one
 };
 
 const SYSTEM_PROMPT = `You are helping a player of Krillion (krillion.io), a daily word game.
@@ -396,9 +398,125 @@ async function callApiWithFallback(req, settings) {
   }
 }
 
+// ---------- answer-cache server ----------
+// Storage only: the extension keeps calling Anthropic on a miss
+// and stores the result here, so the server never sees an API key.
+// A blank server URL disables the cache entirely. Any cache error
+// is a miss: the caller falls back to Anthropic directly.
+function serverBase(settings) {
+  const url = String(settings.serverUrl || "").trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(url)) return "";
+  return url;
+}
+
+function serverHeaders(settings) {
+  const headers = { "content-type": "application/json" };
+  if (settings.serverToken) headers["x-kch-token"] = settings.serverToken;
+  return headers;
+}
+
+async function serverRequest(settings, path, opts) {
+  const base = serverBase(settings);
+  if (!base) throw new Error("no cache server configured");
+  const res = await fetchWithTimeout(base + path, { ...opts, headers: serverHeaders(settings) }, 5000);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(json?.error || `cache server HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+function cacheWordStyle(req, settings) {
+  return req.wordStyle === "common" ? "common" : settings.wordStyle === "common" ? "common" : "rare";
+}
+
+// Returns a cached result, or null on any miss (no entry, empty
+// entry, exhausted by the caller's excludes, or any server error).
+// A cached section that the caller already used up counts as a
+// miss, or regeneration would spin on dead lists forever.
+async function fetchCache(settings, req) {
+  const wordStyle = cacheWordStyle(req, settings);
+  const party = !!req.party;
+  // Query string by hand: URLSearchParams is not available in
+  // every JS realm this code can run in (e.g. a test vm), and the
+  // cache lookup must not depend on it.
+  const query = `prompt=${encodeURIComponent(req.prompt)}&wordStyle=${wordStyle}&party=${party}`;
+  let json;
+  try {
+    json = await serverRequest(settings, `/api/answers?${query}`, { method: "GET" });
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+  if (!json || json.cached !== true) return null;
+  const exclude = new Set((req.exclude || []).map((x) => canonicalKey(x)));
+  const usable = (arr) => (Array.isArray(arr) ? arr.filter((x) => !exclude.has(canonicalKey(x))) : []);
+  const kind = req.kind === "rare" || req.kind === "common" ? req.kind : "both";
+  if (!party) {
+    if (!usable(json.candidates).length) return null;
+    return { candidates: json.candidates, model: json.model, usage: json.usage, cached: true };
+  }
+  if (kind === "rare" && !usable(json.rare).length) return null;
+  if (kind === "common" && !usable(json.common).length) return null;
+  if (kind === "both" && !usable([...(json.rare || []), ...(json.common || [])]).length) return null;
+  return {
+    candidates: [...(json.rare || []), ...(json.common || [])],
+    rare: json.rare || [], common: json.common || [],
+    model: json.model, usage: json.usage, cached: true,
+  };
+}
+
+// Best-effort store: never fail an answer because the cache store
+// failed. The server dedups by text key, so re-storing is safe.
+async function storeCache(settings, req, result, rawText) {
+  const wordStyle = cacheWordStyle(req, settings);
+  const party = !!req.party;
+  await serverRequest(settings, "/api/answers", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt: req.prompt, wordStyle, party,
+      rare: party ? result.rare || [] : [],
+      common: party ? result.common || [] : [],
+      candidates: party ? [] : result.candidates || [],
+      model: result.model, rawText: rawText || "",
+    }),
+  });
+}
+
+async function reportFeedback(msg) {
+  const settings = await getSettings();
+  if (settings.enabled === false) return false;
+  const base = serverBase(settings);
+  if (!base) return false;
+  if (typeof msg.prompt !== "string" || typeof msg.text !== "string") return false;
+  await serverRequest(settings, "/api/feedback", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt: msg.prompt,
+      wordStyle: msg.wordStyle === "common" ? "common" : "rare",
+      party: typeof msg.party === "boolean" ? msg.party : true,
+      text: msg.text,
+      outcome: msg.outcome,
+      source: msg.source || "banner",
+    }),
+  });
+  return true;
+}
+
 async function getAnswers(req) {
   const settings = await getSettings();
   if (settings.enabled === false) throw new Error("Krillion Helper is disabled. Turn it on in the extension popup.");
+
+  // Cache first: a warm cache needs no API key at all. Any cache
+  // failure is a miss and falls through to Anthropic below.
+  try {
+    const cached = await fetchCache(settings, req);
+    if (cached) return cached;
+  } catch (_) {
+    // Fall through to Anthropic.
+  }
   if (!settings.apiKey) throw new Error("No API key set. Click the extension icon to add one.");
 
   // Transient failures get up to three attempts with backoff
@@ -448,11 +566,15 @@ async function getAnswers(req) {
     const common = commonOnly ? [...sections.rare, ...sections.common] : sections.common;
     const candidates = [...rare, ...common];
     if (!candidates.length) throw new Error("no usable candidates returned.");
-    return { candidates, rare, common, model: json.model, usage: json.usage };
+    const result = { candidates, rare, common, model: json.model, usage: json.usage };
+    try { await storeCache(settings, req, result, text); } catch (_) {}
+    return result;
   }
   const candidates = parseCandidates(text, req.exclude);
   if (!candidates.length) throw new Error("no usable candidates returned.");
-  return { candidates, model: json.model, usage: json.usage };
+  const result = { candidates, model: json.model, usage: json.usage };
+  try { await storeCache(settings, req, result, text); } catch (_) {}
+  return result;
 }
 
 async function testKey(apiKey) {
@@ -478,6 +600,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "testKey") {
     testKey(msg.apiKey)
       .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
+    return true;
+  }
+  if (msg?.type === "reportOutcome") {
+    // Best-effort outcome reporting for server curation; the
+    // game result never waits on it beyond this response.
+    reportFeedback(msg)
+      .then((ok) => sendResponse({ ok }))
       .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
     return true;
   }

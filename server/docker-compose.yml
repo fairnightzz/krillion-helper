@@ -1,0 +1,14 @@
+services:
+  cache:
+    build: .
+    container_name: krillion-helper-cache
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/app/data
+    environment:
+      # Set this to the same token configured in the extension popup
+      # (Cache server token). Leave unset only on a trusted local
+      # network; with KCH_TOKEN set, /api/* requires X-KCH-Token.
+      - KCH_TOKEN=${KCH_TOKEN:-}
+    restart: unless-stopped

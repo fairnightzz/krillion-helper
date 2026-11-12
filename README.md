@@ -22,6 +22,7 @@ Chrome extension that suggests and fills answers on krillion.io using your own A
 | Auto-click descend | off | Clicks DESCEND about 2.5 s after each result. |
 | Auto Play again | off | Rated party only, Mode auto: clicks Play again / Rematch about 3 s after a game ends, once per game, then clicks Join next game in the lobby (about 2 s) to actually join the next game. |
 | Overlay | on | Status and candidates panel, bottom-left. |
+| Cache server | localhost:8787 | Answer cache (Docker, `server/`): blank URL disables it; token only if the server requires one. |
 
 Settings save automatically when you change them (the API key also saves as you type); Save writes them immediately too. The popup shows saved settings immediately from a local copy (the API key is not in that copy and waits for the storage read), then refreshes them from `chrome.storage.local`, which stays the source of truth.
 
@@ -33,6 +34,10 @@ In Mode "auto", it submits once after a short, jittered pause and only if the bo
 
 The typing is human-like in pacing, not in provenance: it types one keystroke at a time with inconsistent, unquantized delays, word-boundary pauses, occasional pauses and a rare typo + backspace correction, and it stops the moment the turn passes, the answer is already said, or you edit the box. It still uses synthetic input events — a content script cannot produce trusted keystrokes — so the game's input telemetry will still count them as synthetic. What is human-like is what other players and the game's typing stream see: the answer appearing gradually, not pasted whole. In party games, answers over 20 characters are skipped so a rejection still leaves time for a retry; if nothing fits, the shortest usable answer is typed instead.
 
+## Answer cache server
+
+`server/` holds a small storage-only answer cache (SQLite, Dockerized): the extension checks it first for a prompt it has seen before and only calls Claude on a miss, then stores the generated lists. Answers are keyed by normalized prompt, word style, and game. Outcomes from play curate the cache automatically: duplicates and acceptances confirm an answer, while an answer auto-hides only after three rejections with no acceptance or duplicate; manual deletion always wins. If the server is down or unconfigured, the extension falls back to Claude directly. See [server/README.md](/Users/zhehai/Downloads/krillion-helper/server/README.md) for running it, the API, and curation rules.
+
 ## Tests
 
-`node --test tests/*.test.js` — covers the typing planner, the cancellable typer, the party refetch prompt, and popup loading/saving. No dependencies.
+`node --test tests/*.test.js` — covers the typing planner, the cancellable typer, the party refetch prompt, and popup loading/saving. No dependencies. Server tests run separately: `npm --prefix server test`.

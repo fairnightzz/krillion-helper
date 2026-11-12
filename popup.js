@@ -18,8 +18,10 @@ const DEFAULTS = {
   autoAdvance: false,
   autoPlayAgain: false,
   showOverlay: true,
+  serverUrl: "http://localhost:8787",
+  serverToken: "",
 };
-const fields = ["apiKey", "model", "effort", "mode", "wordStyle"];
+const fields = ["apiKey", "model", "effort", "mode", "wordStyle", "serverUrl", "serverToken"];
 const checks = ["enabled", "autoAdvance", "autoPlayAgain", "showOverlay"];
 const statusEl = document.getElementById("status");
 
@@ -76,7 +78,9 @@ function readMirror() {
     if (!parsed || typeof parsed !== "object") return null;
     // Mirrors written by older versions may contain the key; never
     // read it back from here. The key waits for the storage read.
+    // The cache server token is likewise never mirrored.
     delete parsed.apiKey;
+    delete parsed.serverToken;
     return parsed;
   } catch (_) {
     return null;
@@ -87,9 +91,11 @@ function writeMirror(values) {
     if (typeof localStorage === "undefined") return;
     // The key lives only in chrome.storage.local (see popup.html):
     // it is never copied into localStorage, where clearing the
-    // extension store would leave it behind.
+    // extension store would leave it behind. Same for the cache
+    // server token.
     const copy = { ...values };
     delete copy.apiKey;
+    delete copy.serverToken;
     localStorage.setItem(MIRROR_KEY, JSON.stringify(copy));
   } catch (_) {
     // Mirror is best-effort; chrome.storage.local below is authoritative.

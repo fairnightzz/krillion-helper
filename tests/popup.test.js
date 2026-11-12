@@ -150,6 +150,8 @@ test("popup save writes every field through storage.local.set", () => {
   popup.elements.autoAdvance.checked = true;
   popup.elements.autoPlayAgain.checked = true;
   popup.elements.showOverlay.checked = false;
+  popup.elements.serverUrl.value = "http://localhost:9999";
+  popup.elements.serverToken.value = "tok-123";
   popup.click("save");
   // JSON-normalise: the saved object is built inside the vm realm, whose
   // Object prototype differs from this realm's (see humanize.test.js).
@@ -164,6 +166,8 @@ test("popup save writes every field through storage.local.set", () => {
       autoAdvance: true,
       autoPlayAgain: true,
       showOverlay: false,
+      serverUrl: "http://localhost:9999",
+      serverToken: "tok-123",
     },
   ]);
   assert.equal(popup.elements.status.textContent, "Saved.");
@@ -196,6 +200,14 @@ test("changing a setting persists without clicking Save", () => {
   popup.change("showOverlay");
   assert.equal(popup.store.showOverlay, false);
   assert.equal(popup.elements.status.textContent, "Saved.");
+});
+
+test("the cache server token is never written to the localStorage mirror", () => {
+  const popup = loadPopup({ stored: {} });
+  popup.elements.serverToken.value = "tok-secret";
+  popup.input("apiKey");
+  assert.equal("serverToken" in JSON.parse(popup.lsStore["kch-settings"]), false);
+  assert.equal(popup.store.serverToken, "tok-secret");
 });
 
 test("disabling the helper persists without clicking Save", () => {

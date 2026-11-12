@@ -322,7 +322,7 @@ async function waitFor(fn, timeoutMs, label) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true, autoAdvance = false, autoPlayAgain = false, endButtons = false, joinButton = false, joinLabel, responder, rejectFirst = 0, retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
+function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true, autoAdvance = false, autoPlayAgain = false, endButtons = false, joinButton = false, joinLabel, responder, rejectFirst = 0, rejectReason = "already said", retainDraft = false, initialBubbles, prompt = "Name a noodle dish", category = "CATEGORY 3" }) {
   const { doc, root, status, rnd, promptEl, input, button, endButton, findGameButton, joinBtn } = buildDoc({
     rated,
     myTurn: true,
@@ -352,7 +352,7 @@ function setup({ mode = "auto", wordStyle = "rare", rated = true, enabled = true
         rejEl.classList.add("ds-reject");
         root.appendChild(rejEl);
       }
-      rejEl.textContent = `“${liveNode.value}”: already said`;
+      rejEl.textContent = `“${liveNode.value}”: ${rejectReason}`;
     }
     if (retainDraft) return;
     if (liveNode) liveNode._v = "";
@@ -552,11 +552,46 @@ test("one rejection jumps to common, and the next turn starts from rare again", 
   t.after(() => g.teardown());
   await waitFor(() => g.submittedTexts.length >= 2, 9000, "two submits");
   assert.deepEqual(g.submittedTexts.slice(0, 2), ["ra", "ca"]);
+  // "Already said" is a duplicate, not a wrong answer: it is
+  // reported as a duplicate for curation, even though picking
+  // still skips the word this round.
+  const reports = g.calls.filter((c) => c.type === "reportOutcome");
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome, "duplicate");
+  assert.equal(reports[0].text, "ra");
   g.setMyTurn(false);
   await sleep(700);
   g.setMyTurn(true);
   await waitFor(() => g.submittedTexts.includes("rb"), 8000, "rare retried next turn");
   assert.equal(g.submittedTexts[2], "rb");
+});
+
+test("a no-echo rejection is reported as rejected, not as a duplicate", async (t) => {
+  const g = setup({
+    responder: sectionResponder(["ra", "rb", "rc"], ["ca", "cb", "cc"]),
+    rejectFirst: 1,
+    rejectReason: "no echo",
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.length >= 2, 9000, "two submits");
+  assert.deepEqual(g.submittedTexts.slice(0, 2), ["ra", "ca"]);
+  const reports = g.calls.filter((c) => c.type === "reportOutcome");
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome, "rejected");
+  assert.equal(reports[0].text, "ra");
+});
+
+test("a turn passing without a rejection reports the attempt as accepted", async (t) => {
+  const g = setup({ responder: sectionResponder(["ab", "cd"], ["ef", "gh"]) });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submits >= 1, 5000, "first submit");
+  g.setMyTurn(false);
+  await sleep(800);
+  const reports = g.calls.filter((c) => c.type === "reportOutcome");
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome, "accepted");
+  assert.equal(reports[0].text, "ab");
+  assert.equal(reports[0].source, "own");
 });
 
 test("regeneration is not blocked once the two lists total 60", async (t) => {
@@ -624,7 +659,7 @@ test("party typing is always lowercase, whatever the list spelling", async (t) =
   assert.equal(g.submittedTexts[0], "battleship gray");
 });
 
-function setupSolo({ candidates }) {
+function setupSolo({ candidates, rejectReason = null }) {
   const docEl = new El("html");
   const body = new El("body");
   docEl.appendChild(body);
@@ -675,8 +710,15 @@ function setupSolo({ candidates }) {
   form.appendChild(button);
   body.appendChild(form);
   const submitted = [];
+  const messages = [];
   button.addEventListener("click", () => {
     submitted.push(input.value);
+    if (rejectReason && submitted.length === 1) {
+      const rejEl = doc.createElement("div");
+      rejEl.classList.add("ds-reject");
+      rejEl.textContent = `“${input.value}”: ${rejectReason}`;
+      body.appendChild(rejEl);
+    }
     input._v = "";
   });
   const intervals = [];
@@ -702,7 +744,8 @@ function setupSolo({ candidates }) {
     },
     runtime: {
       lastError: undefined,
-      sendMessage: (_msg, cb) => {
+      sendMessage: (msg, cb) => {
+        messages.push(msg);
         setTimeout(() => cb({ ok: true, candidates: [...candidates] }), 0);
       },
     },
@@ -739,6 +782,7 @@ function setupSolo({ candidates }) {
   return {
     input,
     submitted,
+    messages,
     get clicks() {
       return button._clicked || 0;
     },
@@ -754,6 +798,18 @@ test("solo filling is always lowercase, whatever the list spelling", async (t) =
   await waitFor(() => g.submitted.length >= 1, 5000, "solo submit");
   assert.equal(g.submitted[0], "udon");
   assert.equal(g.clicks, 1);
+});
+
+test("a solo no-echo rejection is reported as rejected for the submitted word", async (t) => {
+  const g = setupSolo({ candidates: ["Udon", "Ramen"], rejectReason: "no echo" });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submitted.length >= 2, 8000, "second solo submit after rejection");
+  assert.deepEqual(g.submitted.slice(0, 2), ["udon", "ramen"]);
+  const reports = g.messages.filter((m) => m.type === "reportOutcome");
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome, "rejected");
+  assert.equal(reports[0].text, "udon");
+  assert.equal(reports[0].source, "banner");
 });
 
 test("solo filling folds accents to plain letters", async (t) => {

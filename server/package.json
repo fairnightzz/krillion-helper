@@ -1,0 +1,14 @@
+{
+  "name": "krillion-helper-cache-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Answer-cache server for the krillion-helper extension (storage only; the extension keeps calling Anthropic).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --experimental-sqlite server.js",
+    "test": "node --experimental-sqlite --test server.test.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

@@ -54,7 +54,7 @@ function errorReply(status, message, headers) {
   return { status, headers: headers || {}, json: { error: { message } } };
 }
 
-const SETTINGS = { apiKey: "sk-ant-test", model: "claude-opus-5-5", effort: "low", mode: "auto", candidateCount: 8 };
+const SETTINGS = { apiKey: "sk-ant-test", model: "claude-opus-5-5", effort: "low", mode: "auto", candidateCount: 8, serverUrl: "", serverToken: "" };
 const FLAT_22 = Array.from({ length: 22 }, (_, i) => `Word${i + 1}`).join("\n");
 
 test("a 429 with Retry-After is retried and then succeeds", async () => {
@@ -176,6 +176,92 @@ test("common-only requests ask most-common-first, in party and solo", async () =
   assert.match(w.calls[0].body.messages[0].content, /most common first/);
   await w.ask({ prompt: "Name a noodle dish", exclude: [], party: false, wordStyle: "common" });
   assert.match(w.calls[1].body.messages[0].content, /most common first/);
+});
+
+function cacheHit(rare, common) {
+  return {
+    status: 200,
+    json: { cached: true, rare, common, candidates: [...rare, ...common], model: "claude-opus-5-5", usage: {} },
+  };
+}
+
+test("a cache hit returns stored lists without calling Anthropic", async () => {
+  const w = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://localhost:8787", serverToken: "tok" },
+    responses: [cacheHit(["Udon"], ["Pho"])],
+  });
+  const out = await w.ask({ prompt: "Name a noodle dish", exclude: [], party: true, kind: "both", wordStyle: "rare" });
+  assert.deepEqual(out.rare, ["Udon"]);
+  assert.deepEqual(out.common, ["Pho"]);
+  assert.equal(out.cached, true);
+  assert.equal(w.calls.length, 1);
+  assert.ok(w.calls[0].url.includes("localhost:8787/api/answers"));
+  assert.equal(w.calls[0].headers["x-kch-token"], "tok");
+});
+
+test("a cache miss calls Anthropic and stores the result on the server", async () => {
+  const w = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://localhost:8787" },
+    responses: [
+      { status: 404, json: { cached: false } },
+      textReply("Udon\nRamen\n"),
+      { status: 200, json: { ok: true, stored: 2 } },
+    ],
+  });
+  const out = await w.ask({ prompt: "Name a noodle dish", exclude: [], party: false });
+  assert.deepEqual(out.candidates, ["Udon", "Ramen"]);
+  assert.equal(w.calls.length, 3);
+  assert.ok(w.calls[0].url.includes("localhost:8787/api/answers"));
+  assert.ok(w.calls[1].url.includes("api.anthropic.com"));
+  assert.equal(w.calls[2].body.candidates.length, 2);
+  assert.equal(w.calls[2].body.model, "claude-opus-5-5");
+});
+
+test("a cache section exhausted by excludes counts as a miss", async () => {
+  const w = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://localhost:8787" },
+    responses: [
+      cacheHit(["Udon"], []),
+      textReply("Ramen\n"),
+      { status: 200, json: { ok: true, stored: 1 } },
+    ],
+  });
+  const out = await w.ask({ prompt: "Name a noodle dish", exclude: ["Udon"], party: true, kind: "rare" });
+  assert.deepEqual(out.rare, ["Ramen"]);
+  assert.ok(w.calls.some((c) => c.url.includes("api.anthropic.com")));
+});
+
+test("a cache server failure falls back to Anthropic", async () => {
+  const w = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://localhost:8787" },
+    responses: [
+      new Error("connection refused"),
+      textReply("Udon\n"),
+      { status: 200, json: { ok: true, stored: 1 } },
+    ],
+  });
+  const out = await w.ask({ prompt: "Name a noodle dish", exclude: [], party: false });
+  assert.deepEqual(out.candidates, ["Udon"]);
+});
+
+test("reportOutcome posts the outcome to the cache server", async () => {
+  const w = loadWorker({
+    settings: { ...SETTINGS, serverUrl: "http://localhost:8787", serverToken: "tok" },
+    responses: [{ status: 200, json: { ok: true } }],
+  });
+  const answer = await new Promise((resolve) => {
+    w.ctx.__listener(
+      { type: "reportOutcome", prompt: "Name a noodle dish", wordStyle: "rare", party: true, text: "Udon", outcome: "duplicate", source: "banner" },
+      {},
+      resolve,
+    );
+  });
+  assert.equal(answer.ok, true);
+  assert.equal(w.calls.length, 1);
+  assert.ok(w.calls[0].url.includes("localhost:8787/api/feedback"));
+  assert.equal(w.calls[0].body.outcome, "duplicate");
+  assert.equal(w.calls[0].body.text, "Udon");
+  assert.equal(w.calls[0].headers["x-kch-token"], "tok");
 });
 
 test("the sent system prompt prefers established acronyms and forbids inventing them", async () => {

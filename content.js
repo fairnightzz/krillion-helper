@@ -608,6 +608,37 @@
   // Party lists arrive in sections (rare/common). kind: 'both' for the
   // first fetch of a round, 'rare' or 'common' when regenerating one
   // list that ran out. Solo ignores kind and uses one list.
+  // Report what one answer did, for server curation of the
+  // answer cache. Best-effort: the game result never waits on it.
+  // Duplicates and wrong answers are different outcomes and are
+  // reported differently, even though local picking treats both
+  // as "do not type again this round".
+  function reportOutcome(text, outcome, source) {
+    if (!text || !state.prompt) return;
+    chrome.runtime.sendMessage({
+      type: "reportOutcome",
+      prompt: state.prompt,
+      wordStyle: settings.wordStyle,
+      party: isParty(),
+      text,
+      outcome,
+      source: source || "banner",
+    }, () => { void chrome.runtime.lastError; });
+  }
+  // The rejection banner quotes the word and gives a reason:
+  // "already said" means the answer IS in the game's set and was
+  // just repeated (keep it); "no echo" means it is not in the set
+  // (count it toward removal). Any other phrasing is a rejection:
+  // the banner only appears when the game refused the answer.
+  // "Signal lost" is a network blip, not a verdict: no outcome.
+  function parseRejectOutcome(rejText) {
+    if (/signal lost/i.test(rejText)) return null;
+    const m = rejText.match(/[“"](.+?)[”"]/);
+    const word = m ? m[1] : null;
+    if (/already said|duplicate|said before/i.test(rejText)) return { word, outcome: "duplicate" };
+    return { word, outcome: "rejected" };
+  }
+
   function fetchCandidates(prompt, exclude, kind) {
     // Common-only play never asks for rare answers, whatever list
     // the caller asked to regenerate.
@@ -1007,8 +1038,14 @@
       // never scanned (the corrected form may have shown only
       // briefly, or not at all). The turn passing is the evidence
       // the attempt was made; a merely typed, never-submitted draft
-      // has no awaitingResult and is not recorded here.
-      if (state.awaitingResult) markSaid(state.awaitingResult, state.awaitingResult);
+      // has no awaitingResult and is not recorded here. Passing
+      // the turn without a rejection banner is likewise the
+      // evidence the attempt was accepted: rejection keeps the
+      // turn with the holder and shows the banner instead.
+      if (state.awaitingResult) {
+        markSaid(state.awaitingResult, state.awaitingResult);
+        reportOutcome(state.awaitingResult, "accepted", "own");
+      }
       state.filledForUser = null;
       state.awaitingResult = null;
       state.enterDiag = null;
@@ -1042,6 +1079,8 @@
       state.rejectCount += 1;
       state.awaitingResult = null;
       cancelTyping();
+      const parsed = parseRejectOutcome(rejText);
+      if (parsed && parsed.word) reportOutcome(parsed.word, parsed.outcome, "banner");
       const m = rejText.match(/[“"](.+?)[”"]/);
       if (m) {
         const rejectedText = m[1];
@@ -1203,6 +1242,17 @@
     const prompt = currentPrompt();
     if (!prompt) {
       if (state.roundKey !== null) {
+        // Solo feedback phase (the prompt card is gone and the
+        // Descend control is showing) with an answer still
+        // recorded as submitted means that answer was accepted:
+        // a rejection keeps the prompt up and shows the banner
+        // instead. Leaving the dive shows no Descend control, so
+        // an unsubmitted fill is never reported as accepted.
+        // (Party acceptance is reported when the turn passes.)
+        if (!party && state.lastSubmitted && $(".ds-next-wrap .ds-next-btn")) {
+          reportOutcome(state.lastSubmitted, "accepted", "own");
+        }
+        state.lastSubmitted = null;
         // A prompt-free gap between categories must not wipe the
         // leftover's identity: record whatever is in the box and
         // clear it here, before the state below is cleared, or the
@@ -1280,6 +1330,10 @@
         if (/^signal lost/i.test(text)) {
           state.lastSubmitted = null; // resend the same one
         } else {
+          const parsed = parseRejectOutcome(text);
+          if (parsed && (parsed.word || state.lastSubmitted)) {
+            reportOutcome(parsed.word || state.lastSubmitted, parsed.outcome, "banner");
+          }
           if (state.lastSubmitted) state.rejected.push(state.lastSubmitted);
           state.idx += 1;
           state.lastSubmitted = null;
