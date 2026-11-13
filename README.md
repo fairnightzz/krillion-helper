@@ -22,7 +22,7 @@ Chrome extension that suggests and fills answers on krillion.io using your own A
 | Auto-click descend | off | Clicks DESCEND about 2.5 s after each result. |
 | Auto Play again | off | Rated party only, Mode auto: clicks Play again / Rematch about 3 s after a game ends, once per game, then clicks Join next game in the lobby (about 2 s) to actually join the next game. |
 | Overlay | on | Status and candidates panel, bottom-left. |
-| Cache server | localhost:8787 | Answer cache (Docker, `server/`): blank URL disables it; token only if the server requires one. |
+| Cache server | https://krillion.zhehaizhang.com | Answer cache (Docker, `server/`), hosted at https://krillion.zhehaizhang.com (requires a token). A self-hosted server works too, e.g. `http://localhost:8787`. Blank URL disables it. |
 
 Settings save automatically when you change them (the API key also saves as you type); Save writes them immediately too. The popup shows saved settings immediately from a local copy (the API key is not in that copy and waits for the storage read), then refreshes them from `chrome.storage.local`, which stays the source of truth.
 

@@ -18,7 +18,7 @@ const DEFAULTS = {
   autoAdvance: false,
   autoPlayAgain: false,
   showOverlay: true,
-  serverUrl: "http://localhost:8787",
+  serverUrl: "https://krillion.zhehaizhang.com",
   serverToken: "",
 };
 const fields = ["apiKey", "model", "effort", "mode", "wordStyle", "serverUrl", "serverToken"];

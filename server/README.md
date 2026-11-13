@@ -21,7 +21,8 @@ with the same flag.
 
 ## Extension settings
 
-- **Cache server URL**: `http://localhost:8787` by default; blank
+- **Cache server URL**: `https://krillion.zhehaizhang.com` by default (`http://localhost:8787`
+  for a server on your own machine); blank
   disables the cache (every request goes to Claude directly).
 - **Cache server token**: sent as `X-KCH-Token`. Leave the server
   `KCH_TOKEN` unset only on a trusted local network: with it set,

@@ -32,7 +32,7 @@ const DEFAULTS = {
   autoAdvance: false,
   showOverlay: true,
   candidateCount: 8,
-  serverUrl: "http://localhost:8787", // answer-cache server; blank disables it
+  serverUrl: "https://krillion.zhehaizhang.com", // answer-cache server; blank disables it
   serverToken: "", // sent as X-KCH-Token when the server requires one
 };
 

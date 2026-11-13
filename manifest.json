@@ -4,7 +4,7 @@
   "version": "1.3.0",
   "description": "Suggests and fills answers on krillion.io using your own API key.",
   "permissions": ["storage"],
-  "host_permissions": ["https://api.anthropic.com/*", "https://krillion.io/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "host_permissions": ["https://api.anthropic.com/*", "https://krillion.io/*", "http://localhost/*", "http://127.0.0.1/*", "https://krillion.zhehaizhang.com/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "Krillion Helper" },
   "content_scripts": [
