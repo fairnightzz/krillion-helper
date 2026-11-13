@@ -104,10 +104,10 @@ td.detail { text-align: left; padding: 12px 14px 16px; background: var(--chip); 
 .gate .err { color: var(--bad); font-size: 13px; min-height: 18px; }
 .bar { max-width: 48px; }
 @media (max-width: 640px) {
-  /* Phone: keep Question, Rare, Common, ✓, ✗ so nothing scrolls sideways. */
-  th:nth-child(4), td:nth-child(4), th:nth-child(6), td:nth-child(6),
+  /* Phone: keep Question, Seen, Rare, Common so nothing scrolls sideways. */
+  th:nth-child(5), td:nth-child(5), th:nth-child(6), td:nth-child(6), th:nth-child(7), td:nth-child(7),
   th:nth-child(8), td:nth-child(8), th:nth-child(9), td:nth-child(9),
-  th:nth-child(10), td:nth-child(10) { display: none; }
+  th:nth-child(10), td:nth-child(10), th:nth-child(11), td:nth-child(11) { display: none; }
   th:first-child, td:first-child { min-width: 0; }
   td.detail { display: table-cell !important; }
   th, td { padding: 8px 6px; }
@@ -155,6 +155,7 @@ td.detail { text-align: left; padding: 12px 14px 16px; background: var(--chip); 
     <input type="search" id="search" placeholder="Search questions or models">
     <div class="filters" id="filters">
       <button data-f="all" aria-pressed="true">All</button>
+      <button data-f="repeat" aria-pressed="false">Seen 2+</button>
       <button data-f="rare" aria-pressed="false">Has rare</button>
       <button data-f="krill" aria-pressed="false">Krillion ✦</button>
       <button data-f="hidden" aria-pressed="false">Has hidden</button>
@@ -166,6 +167,7 @@ td.detail { text-align: left; padding: 12px 14px 16px; background: var(--chip); 
     <table>
       <thead><tr>
         <th data-sort="prompt">Question</th>
+        <th data-sort="seen" title="Times this question came up (lookups within 90 s count once)">Seen</th>
         <th data-sort="rare" class="c-rare">Rare</th>
         <th data-sort="common" class="c-common">Common</th>
         <th data-sort="solo" class="c-solo">Solo</th>
@@ -248,7 +250,8 @@ function groupQuestions() {
   for (const p of data.prompts) {
     let q = map.get(p.key);
     if (!q) map.set(p.key, (q = { key: p.key, prompt: p.prompt, variants: [], rare: 0, common: 0, solo: 0,
-      accepted: 0, duplicate: 0, rejected: 0, hidden: 0, hits: 0, misses: 0, krillion: [], updatedAt: "", models: new Set() }));
+      accepted: 0, duplicate: 0, rejected: 0, hidden: 0, hits: 0, misses: 0, krillion: [], updatedAt: "", models: new Set(),
+      seen: 0, firstSeen: "", lastSeen: "" }));
     q.variants.push(p);
     for (const f of ["rare", "common", "solo", "accepted", "duplicate", "rejected", "hits", "misses"]) q[f] += p[f];
     q.hidden += p.hidden + p.removed;
@@ -257,6 +260,10 @@ function groupQuestions() {
     if (p.updatedAt > q.updatedAt) { q.updatedAt = p.updatedAt; q.prompt = p.prompt; }
   }
   questions = [...map.values()];
+  for (const q of questions) {
+    const e = (data.encounters || {})[q.key];
+    if (e) { q.seen = e.count; q.firstSeen = e.firstSeen; q.lastSeen = e.lastSeen; }
+  }
 }
 
 function render() {
@@ -271,6 +278,8 @@ function render() {
   $("tiles").replaceChildren(
     el("div", { class: "tile" }, el("div", { class: "label" }, "Questions"), el("div", { class: "value" }, fmt(t.questions)),
       el("div", { class: "sub" }, models.length ? "via " + models.join(", ") : "no model lists yet")),
+    el("div", { class: "tile" }, el("div", { class: "label" }, "Questions seen"), el("div", { class: "value" }, fmt(t.encounters)),
+      el("div", { class: "sub" }, fmt(t.repeatedQuestions) + " came up more than once")),
     el("div", { class: "tile" }, el("div", { class: "label" }, "Stored answers"), el("div", { class: "value" }, fmt(answers)),
       el("div", { class: "sub" }, el("span", { class: "c-rare" }, fmt(t.answers.rare) + " rare"), " · ",
         el("span", { class: "c-common" }, fmt(t.answers.common) + " common"), t.answers.solo ? [" · ", el("span", { class: "c-solo" }, fmt(t.answers.solo) + " solo")] : ""),
@@ -305,6 +314,7 @@ function renderTable() {
   const q = $("search").value.trim().toLowerCase();
   let list = questions.filter((x) => {
     if (q && !x.prompt.toLowerCase().includes(q) && ![...x.models].some((m) => m.toLowerCase().includes(q))) return false;
+    if (filter === "repeat") return x.seen > 1;
     if (filter === "rare") return x.rare > 0;
     if (filter === "krill") return x.krillion.length > 0;
     if (filter === "hidden") return x.hidden > 0;
@@ -327,18 +337,19 @@ function renderTable() {
     rows.push(el("tr", { class: "q" + (open.has(x.key) ? " open" : ""), onclick: () => toggle(x.key) },
       el("td", {}, x.prompt, x.krillion.length ? el("span", { class: "tag k" }, "✦ " + x.krillion.length) : null,
         ...styles.map((s) => el("span", { class: "tag" }, s))),
+      el("td", { title: x.lastSeen ? "Last seen " + new Date(x.lastSeen).toLocaleString() : "" }, num(x.seen)),
       el("td", {}, num(x.rare, "c-rare")), el("td", {}, num(x.common, "c-common")), el("td", {}, num(x.solo, "c-solo")),
       el("td", {}, num(x.accepted, "c-ok")), el("td", {}, num(x.duplicate, "c-dup")), el("td", {}, num(x.rejected, "c-bad")),
       el("td", {}, num(x.hidden)), el("td", {}, num(x.hits)),
       el("td", { title: new Date(x.updatedAt).toLocaleString() }, el("span", { class: "meta" }, ago(x.updatedAt))),
     ));
     if (open.has(x.key)) {
-      const cell = el("td", { class: "detail", colspan: "10" }, el("div", { class: "empty" }, "Loading answers…"));
+      const cell = el("td", { class: "detail", colspan: "11" }, el("div", { class: "empty" }, "Loading answers…"));
       rows.push(el("tr", {}, cell));
       loadDetail(x, cell);
     }
   }
-  if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: "10", class: "empty" }, questions.length ? "No questions match." : "The cache is empty.")));
+  if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: "11", class: "empty" }, questions.length ? "No questions match." : "The cache is empty.")));
   $("rows").replaceChildren(...rows);
 }
 
@@ -376,6 +387,8 @@ async function loadDetail(x, cell) {
         }),
       ))));
   }
+  if (x.seen) parts.unshift(el("div", { class: "meta", style: "margin-bottom:10px" },
+    `Seen ${x.seen} time${x.seen === 1 ? "" : "s"} · first ${new Date(x.firstSeen).toLocaleString()} · last ${ago(x.lastSeen)}`));
   cell.replaceChildren(...parts);
 }
 

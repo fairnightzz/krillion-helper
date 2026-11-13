@@ -26,19 +26,26 @@ Open `/dashboard` on the server (for example
 and enter the `KCH_TOKEN`. The browser remembers the token until
 you click Sign out. The page shows:
 
-- Totals: questions, stored answers (rare / common / solo),
+- Totals: how many questions you have run into (and how many
+  came up more than once), stored answers (rare / common / solo),
   cache hit rate, outcomes from play, krillion finds, and how
   many answers are hidden.
 - Cache lookups per day (hits vs misses) and the latest
   krillion-tier finds.
-- Every question, searchable, filterable, and sortable. Click a
+- Every question, searchable, filterable, and sortable, with a
+  **Seen** count: how many times that question has come up. Every
+  cache lookup is a sighting, but lookups for the same question
+  within 90 seconds count once, so a refetch in the same round does
+  not inflate it. Seen counts live in their own `encounters` table
+  and are never pruned; a database from before this table was added
+  fills it once from the event log on startup. Click a
   question to see its answers with their accepted / duplicate /
   rejected counts; hidden answers are struck through and krillion
   finds are marked ✦.
 
 The page holds no data itself: it reads everything through
 `GET /api/overview` and `GET /api/stats`, which need the token.
-Hit, miss, krillion, and daily numbers come from the event log, so
+Hit, miss, krillion, and daily numbers (not Seen) come from the event log, so
 they cover its newest 100,000 events.
 
 ## Extension settings

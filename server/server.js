@@ -23,6 +23,10 @@ const MAX_TEXT_LEN = 256;
 // The event log keeps the newest events and prunes the rest, so
 // collecting a lot of logs cannot grow the database without bound.
 const MAX_EVENTS = 100000;
+// A question counts as encountered again only when no lookup for it
+// arrived in this window: a refetch inside the same round (the list
+// ran dry, or the exclude list grew) must not count twice.
+const ENCOUNTER_GAP_MS = 90 * 1000;
 // Game-event kinds the extension may relay with POST /api/events.
 // Keep in sync with LOG_EVENT_KINDS in background.js.
 const GAME_EVENT_KINDS = new Set([
@@ -117,7 +121,57 @@ function openDb(dbPath) {
     );
     CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind, id);
   `);
+  const hadEncounters = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'encounters'",
+  ).get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS encounters (
+      prompt_key TEXT PRIMARY KEY,
+      prompt_text TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      first_seen TEXT NOT NULL,
+      last_seen TEXT NOT NULL
+    );
+  `);
+  if (!hadEncounters) backfillEncounters(db);
   return db;
+}
+
+// How often each question has come up, kept outside the pruned
+// event log so it never shrinks. Every cache lookup (hit or miss)
+// is a sighting; sightings closer than ENCOUNTER_GAP_MS merge.
+function noteEncounter(db, prompt, atIso) {
+  const key = promptKey(prompt);
+  if (!key) return;
+  const at = atIso || nowIso();
+  try {
+    const row = db.prepare("SELECT last_seen FROM encounters WHERE prompt_key = ?").get(key);
+    if (!row) {
+      db.prepare(
+        "INSERT INTO encounters (prompt_key, prompt_text, count, first_seen, last_seen) VALUES (?, ?, 1, ?, ?)",
+      ).run(key, String(prompt).trim(), at, at);
+      return;
+    }
+    const fresh = Date.parse(at) - Date.parse(row.last_seen) >= ENCOUNTER_GAP_MS;
+    db.prepare(
+      "UPDATE encounters SET count = count + ?, prompt_text = ?, last_seen = ? WHERE prompt_key = ?",
+    ).run(fresh ? 1 : 0, String(prompt).trim(), at, key);
+  } catch (_) {}
+}
+
+// One-time fill for databases that predate the encounters table:
+// replay every cache lookup still in the event log, oldest first.
+function backfillEncounters(db) {
+  const rows = db.prepare(
+    "SELECT created_at, prompt_text FROM events WHERE kind IN ('cache_hit', 'cache_miss') AND prompt_text IS NOT NULL ORDER BY id ASC",
+  ).all();
+  db.exec("BEGIN");
+  try {
+    for (const r of rows) noteEncounter(db, r.prompt_text, r.created_at);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+  }
 }
 
 // Auto-hide rule: one uncontested rejection is enough — the
@@ -402,6 +456,13 @@ function buildOverview(db) {
      FROM events GROUP BY day ORDER BY day DESC LIMIT 14`,
   ).all().reverse();
   const eventsInfo = db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS since FROM events").get();
+  const encounters = {};
+  for (const r of db.prepare("SELECT prompt_key, count, first_seen, last_seen FROM encounters").all()) {
+    encounters[r.prompt_key] = { count: r.count, firstSeen: r.first_seen, lastSeen: r.last_seen };
+  }
+  const encounterTotals = db.prepare(
+    "SELECT COALESCE(SUM(count), 0) AS total, COALESCE(SUM(count > 1), 0) AS repeated FROM encounters",
+  ).get();
 
   const list = [...rows.values()];
   const sum = (f) => list.reduce((a, r) => a + r[f], 0);
@@ -418,11 +479,14 @@ function buildOverview(db) {
       feedback: { accepted: sum("accepted"), duplicate: sum("duplicate"), rejected: sum("rejected") },
       cache,
       krillion: krillionFinds.length,
+      encounters: encounterTotals.total,
+      repeatedQuestions: encounterTotals.repeated,
       events: eventsInfo.n,
       eventsSince: eventsInfo.since,
       models,
     },
     prompts: list,
+    encounters,
     krillionFinds: krillionFinds.slice(0, 50),
     daily,
   };
@@ -470,6 +534,7 @@ async function handleRequest(db, token, req, res) {
       if (!promptKey(prompt) || wordStyle === null || party === null) {
         return sendJson(res, 400, { error: "prompt, wordStyle, and party are required" });
       }
+      noteEncounter(db, prompt);
       const row = findPrompt(db, prompt, wordStyle, party);
       if (!row) {
         recordEvent(db, "cache_miss", { prompt_text: String(prompt).trim(), detail: { wordStyle, party, reason: "no_entry" } });
@@ -732,4 +797,4 @@ function startFromEnv() {
 
 if (require.main === module) startFromEnv();
 
-module.exports = { createServer, openDb, promptKey, textKey, isAutoHidden, visibleLists };
+module.exports = { createServer, openDb, promptKey, textKey, isAutoHidden, visibleLists, noteEncounter, ENCOUNTER_GAP_MS };

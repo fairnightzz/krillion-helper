@@ -353,3 +353,49 @@ test("dashboard page is served without a token and holds no data", async (t) => 
   assert.match(html, /<title>Krillion Cache<\/title>/);
   assert.match(html, /\/api\/overview/);
 });
+
+test("encounters count each question once per round and survive event pruning", async (t) => {
+  const { noteEncounter, ENCOUNTER_GAP_MS, openDb } = require("./server.js");
+  const base = await start(t);
+  // Two lookups in the same round (a refetch) are one encounter.
+  await req(base, "/api/answers?prompt=Name%20a%20noodle%20dish&wordStyle=rare&party=true");
+  await req(base, "/api/answers?prompt=name%20a%20NOODLE%20dish%3F&wordStyle=common&party=true");
+  let o = (await req(base, "/api/overview")).body;
+  assert.equal(o.encounters["name a noodle dish"].count, 1);
+  assert.equal(o.totals.encounters, 1);
+  assert.equal(o.totals.repeatedQuestions, 0);
+
+  // Directly: a sighting after the gap is a new encounter.
+  const db = openDb(":memory:");
+  const t0 = Date.parse("2026-11-13T00:00:00Z");
+  noteEncounter(db, "Name a fruit", new Date(t0).toISOString());
+  noteEncounter(db, "Name a fruit", new Date(t0 + 30000).toISOString());
+  noteEncounter(db, "Name a fruit", new Date(t0 + 30000 + ENCOUNTER_GAP_MS).toISOString());
+  const row = db.prepare("SELECT count, first_seen, last_seen FROM encounters WHERE prompt_key = 'name a fruit'").get();
+  assert.equal(row.count, 2);
+  assert.equal(row.first_seen, "2026-11-13T00:00:00.000Z");
+  db.close();
+});
+
+test("encounters backfill from the event log on first open", (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { openDb } = require("./server.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kch-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "kch.sqlite");
+  let db = openDb(file);
+  db.exec("DROP TABLE encounters");
+  const ins = db.prepare("INSERT INTO events (created_at, kind, prompt_text) VALUES (?, ?, ?)");
+  ins.run("2026-11-13T00:00:00.000Z", "cache_miss", "Name a fruit");
+  ins.run("2026-11-13T00:00:10.000Z", "cache_hit", "Name a fruit");
+  ins.run("2026-11-13T01:00:00.000Z", "cache_hit", "Name a fruit");
+  ins.run("2026-11-13T01:00:00.000Z", "feedback", "Name a fruit");
+  db.close();
+  db = openDb(file);
+  const row = db.prepare("SELECT count, last_seen FROM encounters WHERE prompt_key = 'name a fruit'").get();
+  assert.equal(row.count, 2);
+  assert.equal(row.last_seen, "2026-11-13T01:00:00.000Z");
+  db.close();
+});
