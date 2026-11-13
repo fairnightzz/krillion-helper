@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Krillion Cache</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1c1a; --muted: #6f6c64; --line: #e4e1d9;
+  --accent: #2f6f8f; --rare: #7a4fb5; --common: #2f6f8f; --solo: #9a6a1c;
+  --ok: #2e7d4f; --dup: #8a7a2a; --bad: #b4412f; --krill: #d0507a;
+  --hit: #2e7d4f; --miss: #c9c4b8; --chip: #f0eee8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151514; --panel: #1e1e1c; --ink: #ecebe6; --muted: #9b988f; --line: #33322f;
+    --accent: #6fb0cf; --rare: #b394e0; --common: #6fb0cf; --solo: #d6a656;
+    --ok: #6cc28f; --dup: #cdbb5c; --bad: #e57f6c; --krill: #f08cae;
+    --hit: #6cc28f; --miss: #4a4843; --chip: #2a2a27;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+.meta { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; }
+button, input, select {
+  font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.tile .label { color: var(--muted); font-size: 12px; }
+.tile .value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.split { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 8px; background: var(--chip); }
+.split span { display: block; height: 100%; }
+.row2 { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+@media (max-width: 760px) { .row2 { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-top: 8px; }
+.bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; height: 100%; }
+.bar > span { display: block; width: 100%; }
+.bar .h { background: var(--hit); border-radius: 3px 3px 0 0; }
+.bar .m { background: var(--miss); }
+.bar .h + .m { border-radius: 0; }
+.bar .m:first-child { border-radius: 3px 3px 0 0; }
+.barlabels { display: flex; gap: 6px; margin-top: 4px; }
+.barlabels span { flex: 1; text-align: center; font-size: 10px; color: var(--muted); min-width: 0; overflow: hidden; }
+.legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+.finds { list-style: none; margin: 0; padding: 0; max-height: 190px; overflow: auto; }
+.finds li { padding: 6px 0; border-top: 1px solid var(--line); }
+.finds li:first-child { border-top: 0; }
+.finds b { color: var(--krill); }
+.finds .q { color: var(--muted); font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.toolbar input[type=search] { flex: 1; min-width: 180px; }
+.filters { display: flex; gap: 4px; flex-wrap: wrap; }
+.filters button { border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+.filters button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 240px; }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+th[data-sort]::after { content: " ↕"; opacity: 0.35; }
+th.sorted-asc::after { content: " ↑"; opacity: 1; }
+th.sorted-desc::after { content: " ↓"; opacity: 1; }
+tbody tr.q { cursor: pointer; }
+tbody tr.q:hover td { background: var(--chip); }
+tbody tr.q.open td { background: var(--chip); }
+td .zero { color: var(--line); }
+.tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--chip); color: var(--muted); margin-left: 4px; vertical-align: 1px; text-transform: uppercase; letter-spacing: 0.04em; }
+.tag.k { background: color-mix(in srgb, var(--krill) 18%, transparent); color: var(--krill); }
+.c-rare { color: var(--rare); } .c-common { color: var(--common); } .c-solo { color: var(--solo); }
+.c-ok { color: var(--ok); } .c-dup { color: var(--dup); } .c-bad { color: var(--bad); }
+td.detail { text-align: left; padding: 12px 14px 16px; background: var(--chip); white-space: normal; }
+.variant + .variant { margin-top: 14px; }
+.variant h3 { font-size: 12px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
+.list { margin: 6px 0 2px; }
+.list .lk { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 6px; }
+.ans { display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; margin: 3px 3px 0 0; font-size: 13px; }
+.ans small { font-size: 11px; font-variant-numeric: tabular-nums; }
+.ans.gone { opacity: 0.45; text-decoration: line-through; }
+.ans.krill { border-color: var(--krill); }
+.ans.krill::before { content: "✦"; color: var(--krill); font-size: 11px; }
+.gate { max-width: 380px; margin: 12vh auto 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+.gate h1 { margin-bottom: 6px; }
+.gate p { color: var(--muted); margin: 0 0 14px; }
+.gate input { width: 100%; margin-bottom: 10px; }
+.gate .err { color: var(--bad); font-size: 13px; min-height: 18px; }
+.bar { max-width: 48px; }
+@media (max-width: 640px) {
+  /* Phone: keep Question, Rare, Common, ✓, ✗ so nothing scrolls sideways. */
+  th:nth-child(4), td:nth-child(4), th:nth-child(6), td:nth-child(6),
+  th:nth-child(8), td:nth-child(8), th:nth-child(9), td:nth-child(9),
+  th:nth-child(10), td:nth-child(10) { display: none; }
+  th:first-child, td:first-child { min-width: 0; }
+  td.detail { display: table-cell !important; }
+  th, td { padding: 8px 6px; }
+}
+.hidden { display: none !important; }
+.count { color: var(--muted); font-size: 12px; margin-left: auto; }
+</style>
+</head>
+<body>
+<div id="gate" class="gate hidden">
+  <h1>Krillion Cache</h1>
+  <p>Enter the cache server token (the same one the extension uses).</p>
+  <input id="tokenInput" type="password" placeholder="Token" autocomplete="off">
+  <div class="err" id="gateErr"></div>
+  <button id="tokenSave">Open dashboard</button>
+</div>
+
+<div id="app" class="wrap hidden">
+  <header>
+    <h1>Krillion Cache</h1>
+    <span class="meta" id="updated"></span>
+    <span class="spacer"></span>
+    <button id="refresh">Refresh</button>
+    <button id="forget" title="Forget the saved token on this browser">Sign out</button>
+  </header>
+
+  <div class="tiles" id="tiles"></div>
+
+  <h2>Activity</h2>
+  <div class="row2">
+    <div class="card">
+      <div class="meta">Cache lookups per day (last 14 days with activity)</div>
+      <div class="bars" id="bars"></div>
+      <div class="barlabels" id="barlabels"></div>
+      <div class="legend"><span><i class="dot" style="background:var(--hit)"></i>hits</span><span><i class="dot" style="background:var(--miss)"></i>misses (asked Claude)</span></div>
+    </div>
+    <div class="card">
+      <div class="meta" style="margin-bottom:6px">Krillion-tier finds ✦ (opponent answers added to rare)</div>
+      <ul class="finds" id="finds"></ul>
+    </div>
+  </div>
+
+  <h2>Questions</h2>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Search questions or models">
+    <div class="filters" id="filters">
+      <button data-f="all" aria-pressed="true">All</button>
+      <button data-f="rare" aria-pressed="false">Has rare</button>
+      <button data-f="krill" aria-pressed="false">Krillion ✦</button>
+      <button data-f="hidden" aria-pressed="false">Has hidden</button>
+      <button data-f="rejected" aria-pressed="false">Has rejections</button>
+    </div>
+    <span class="count" id="count"></span>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th data-sort="prompt">Question</th>
+        <th data-sort="rare" class="c-rare">Rare</th>
+        <th data-sort="common" class="c-common">Common</th>
+        <th data-sort="solo" class="c-solo">Solo</th>
+        <th data-sort="accepted" class="c-ok" title="Accepted outcomes reported from play">✓</th>
+        <th data-sort="duplicate" class="c-dup" title="Already said (answer is valid)">Dup</th>
+        <th data-sort="rejected" class="c-bad" title="Rejected (no echo)">✗</th>
+        <th data-sort="hidden" title="Auto-hidden after a rejection, or deleted by hand">Hidden</th>
+        <th data-sort="hits" title="Cache hits (from the event log)">Hits</th>
+        <th data-sort="updatedAt">Updated</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+"use strict";
+const TOKEN_KEY = "kch-dashboard-token";
+const $ = (id) => document.getElementById(id);
+let token = "";
+try { token = localStorage.getItem(TOKEN_KEY) || ""; } catch (_) {}
+let data = null;
+let questions = [];
+let sortKey = "updatedAt", sortDir = -1, filter = "all";
+const open = new Set();
+
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") n.className = v;
+    else if (k === "style") n.setAttribute("style", v);
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid instanceof Node ? kid : String(kid));
+  return n;
+}
+const fmt = (n) => Number(n || 0).toLocaleString();
+function ago(iso) {
+  if (!iso) return "";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+function num(n, cls) { return n ? el("span", cls ? { class: cls } : {}, fmt(n)) : el("span", { class: "zero" }, "0"); }
+
+async function api(path) {
+  const res = await fetch(path, { headers: token ? { "X-KCH-Token": token } : {} });
+  if (res.status === 401) { const e = new Error("unauthorized"); e.auth = true; throw e; }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+function showGate(msg) {
+  $("app").classList.add("hidden");
+  $("gate").classList.remove("hidden");
+  $("gateErr").textContent = msg || "";
+  $("tokenInput").focus();
+}
+
+async function load() {
+  try {
+    data = await api("/api/overview");
+  } catch (e) {
+    if (e.auth) return showGate(token ? "That token was not accepted." : "");
+    $("updated").textContent = "Could not load: " + e.message;
+    return;
+  }
+  $("gate").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  groupQuestions();
+  render();
+}
+
+// One row per question; its variants (word style + game) sit inside.
+function groupQuestions() {
+  const map = new Map();
+  for (const p of data.prompts) {
+    let q = map.get(p.key);
+    if (!q) map.set(p.key, (q = { key: p.key, prompt: p.prompt, variants: [], rare: 0, common: 0, solo: 0,
+      accepted: 0, duplicate: 0, rejected: 0, hidden: 0, hits: 0, misses: 0, krillion: [], updatedAt: "", models: new Set() }));
+    q.variants.push(p);
+    for (const f of ["rare", "common", "solo", "accepted", "duplicate", "rejected", "hits", "misses"]) q[f] += p[f];
+    q.hidden += p.hidden + p.removed;
+    q.krillion.push(...p.krillion);
+    if (p.model) q.models.add(p.model);
+    if (p.updatedAt > q.updatedAt) { q.updatedAt = p.updatedAt; q.prompt = p.prompt; }
+  }
+  questions = [...map.values()];
+}
+
+function render() {
+  const t = data.totals;
+  $("updated").textContent = "Updated " + new Date(data.generatedAt).toLocaleTimeString();
+  const answers = t.answers.rare + t.answers.common + t.answers.solo;
+  const lookups = t.cache.hit + t.cache.miss;
+  const fbTotal = t.feedback.accepted + t.feedback.duplicate + t.feedback.rejected;
+  const pct = (a, b) => b ? Math.round((a / b) * 100) + "%" : "–";
+  const seg = (n, total, color) => el("span", { style: `width:${total ? (n / total) * 100 : 0}%;background:${color}` });
+  const models = Object.entries(t.models).sort((a, b) => b[1] - a[1]).map(([m]) => m.replace(/^claude-/, "").replace(/-\d{8}$/, ""));
+  $("tiles").replaceChildren(
+    el("div", { class: "tile" }, el("div", { class: "label" }, "Questions"), el("div", { class: "value" }, fmt(t.questions)),
+      el("div", { class: "sub" }, models.length ? "via " + models.join(", ") : "no model lists yet")),
+    el("div", { class: "tile" }, el("div", { class: "label" }, "Stored answers"), el("div", { class: "value" }, fmt(answers)),
+      el("div", { class: "sub" }, el("span", { class: "c-rare" }, fmt(t.answers.rare) + " rare"), " · ",
+        el("span", { class: "c-common" }, fmt(t.answers.common) + " common"), t.answers.solo ? [" · ", el("span", { class: "c-solo" }, fmt(t.answers.solo) + " solo")] : ""),
+      el("div", { class: "split" }, seg(t.answers.rare, answers, "var(--rare)"), seg(t.answers.common, answers, "var(--common)"), seg(t.answers.solo, answers, "var(--solo)"))),
+    el("div", { class: "tile" }, el("div", { class: "label" }, "Cache hit rate"), el("div", { class: "value" }, pct(t.cache.hit, lookups)),
+      el("div", { class: "sub" }, fmt(t.cache.hit) + " hits / " + fmt(t.cache.miss) + " misses"),
+      el("div", { class: "split" }, seg(t.cache.hit, lookups, "var(--hit)"), seg(t.cache.miss, lookups, "var(--miss)"))),
+    el("div", { class: "tile" }, el("div", { class: "label" }, "Outcomes from play"), el("div", { class: "value" }, fmt(fbTotal)),
+      el("div", { class: "sub" }, el("span", { class: "c-ok" }, fmt(t.feedback.accepted) + " ✓"), " · ",
+        el("span", { class: "c-dup" }, fmt(t.feedback.duplicate) + " dup"), " · ", el("span", { class: "c-bad" }, fmt(t.feedback.rejected) + " ✗")),
+      el("div", { class: "split" }, seg(t.feedback.accepted, fbTotal, "var(--ok)"), seg(t.feedback.duplicate, fbTotal, "var(--dup)"), seg(t.feedback.rejected, fbTotal, "var(--bad)"))),
+    el("div", { class: "tile" }, el("div", { class: "label" }, "Krillion finds ✦"), el("div", { class: "value", style: "color:var(--krill)" }, fmt(t.krillion)),
+      el("div", { class: "sub" }, fmt(t.hidden + t.removed) + " answers hidden")),
+  );
+
+  const days = data.daily;
+  const max = Math.max(1, ...days.map((d) => d.hits + d.misses));
+  $("bars").replaceChildren(...(days.length ? days.map((d) => el("div", { class: "bar", title: `${d.day}: ${d.hits} hits, ${d.misses} misses, ${d.submits} submits` },
+    d.hits ? el("span", { class: "h", style: `height:${(d.hits / max) * 100}%` }) : null,
+    d.misses ? el("span", { class: "m", style: `height:${(d.misses / max) * 100}%` }) : null,
+  )) : [el("div", { class: "empty" }, "No activity yet.")]));
+  $("barlabels").replaceChildren(...days.map((d) => el("span", {}, d.day.slice(5))));
+
+  $("finds").replaceChildren(...(data.krillionFinds.length ? data.krillionFinds.map((f) =>
+    el("li", {}, el("b", {}, f.text), " ", el("span", { class: "meta" }, ago(f.at)), el("div", { class: "q" }, f.prompt)))
+    : [el("li", { class: "empty" }, "None yet.")]));
+
+  renderTable();
+}
+
+function renderTable() {
+  const q = $("search").value.trim().toLowerCase();
+  let list = questions.filter((x) => {
+    if (q && !x.prompt.toLowerCase().includes(q) && ![...x.models].some((m) => m.toLowerCase().includes(q))) return false;
+    if (filter === "rare") return x.rare > 0;
+    if (filter === "krill") return x.krillion.length > 0;
+    if (filter === "hidden") return x.hidden > 0;
+    if (filter === "rejected") return x.rejected > 0;
+    return true;
+  });
+  list.sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    const c = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+    return c * sortDir;
+  });
+  for (const th of document.querySelectorAll("th[data-sort]")) {
+    th.classList.toggle("sorted-asc", th.dataset.sort === sortKey && sortDir === 1);
+    th.classList.toggle("sorted-desc", th.dataset.sort === sortKey && sortDir === -1);
+  }
+  $("count").textContent = `${list.length} of ${questions.length}`;
+  const rows = [];
+  for (const x of list) {
+    const styles = x.variants.map((v) => v.party ? v.wordStyle : "solo " + v.wordStyle);
+    rows.push(el("tr", { class: "q" + (open.has(x.key) ? " open" : ""), onclick: () => toggle(x.key) },
+      el("td", {}, x.prompt, x.krillion.length ? el("span", { class: "tag k" }, "✦ " + x.krillion.length) : null,
+        ...styles.map((s) => el("span", { class: "tag" }, s))),
+      el("td", {}, num(x.rare, "c-rare")), el("td", {}, num(x.common, "c-common")), el("td", {}, num(x.solo, "c-solo")),
+      el("td", {}, num(x.accepted, "c-ok")), el("td", {}, num(x.duplicate, "c-dup")), el("td", {}, num(x.rejected, "c-bad")),
+      el("td", {}, num(x.hidden)), el("td", {}, num(x.hits)),
+      el("td", { title: new Date(x.updatedAt).toLocaleString() }, el("span", { class: "meta" }, ago(x.updatedAt))),
+    ));
+    if (open.has(x.key)) {
+      const cell = el("td", { class: "detail", colspan: "10" }, el("div", { class: "empty" }, "Loading answers…"));
+      rows.push(el("tr", {}, cell));
+      loadDetail(x, cell);
+    }
+  }
+  if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: "10", class: "empty" }, questions.length ? "No questions match." : "The cache is empty.")));
+  $("rows").replaceChildren(...rows);
+}
+
+function toggle(key) {
+  if (open.has(key)) open.delete(key); else open.add(key);
+  renderTable();
+}
+
+async function loadDetail(x, cell) {
+  const parts = [];
+  for (const v of x.variants) {
+    let stats;
+    try {
+      stats = await api(`/api/stats?prompt=${encodeURIComponent(v.prompt)}&wordStyle=${v.wordStyle}&party=${v.party}`);
+    } catch (e) {
+      parts.push(el("div", { class: "empty" }, "Could not load: " + e.message));
+      continue;
+    }
+    const krill = new Set(v.krillion.map((s) => s.toLowerCase()));
+    const byKind = { rare: [], common: [], solo: [] };
+    for (const a of stats.answers) (byKind[a.listKind] || (byKind[a.listKind] = [])).push(a);
+    const label = (v.party ? "Party" : "Solo") + " · " + v.wordStyle + " style" + (v.model ? " · " + v.model : "") +
+      ` · ${v.hits} hits, ${v.misses} misses`;
+    parts.push(el("div", { class: "variant" }, el("h3", {}, label),
+      ...Object.entries(byKind).filter(([, arr]) => arr.length).map(([kind, arr]) => el("div", { class: "list" },
+        el("span", { class: "lk c-" + kind }, kind),
+        ...arr.map((a) => {
+          const gone = a.removed || a.autoHidden;
+          const counts = [];
+          if (a.accepted) counts.push(el("small", { class: "c-ok" }, a.accepted + "✓"));
+          if (a.duplicate) counts.push(el("small", { class: "c-dup" }, a.duplicate + "d"));
+          if (a.rejected) counts.push(el("small", { class: "c-bad" }, a.rejected + "✗"));
+          const title = a.removed ? "Deleted by hand" : a.autoHidden ? "Auto-hidden after a rejection" : "";
+          return el("span", { class: "ans" + (gone ? " gone" : "") + (krill.has(a.text.toLowerCase()) ? " krill" : ""), title }, a.text, ...counts);
+        }),
+      ))));
+  }
+  cell.replaceChildren(...parts);
+}
+
+$("tokenSave").addEventListener("click", () => {
+  token = $("tokenInput").value.trim();
+  try { localStorage.setItem(TOKEN_KEY, token); } catch (_) {}
+  load();
+});
+$("tokenInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("tokenSave").click(); });
+$("forget").addEventListener("click", () => {
+  token = "";
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+  $("tokenInput").value = "";
+  showGate("");
+});
+$("refresh").addEventListener("click", load);
+$("search").addEventListener("input", renderTable);
+$("filters").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  filter = b.dataset.f;
+  for (const x of $("filters").children) x.setAttribute("aria-pressed", String(x === b));
+  renderTable();
+});
+for (const th of document.querySelectorAll("th[data-sort]")) {
+  th.addEventListener("click", () => {
+    const k = th.dataset.sort;
+    if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = k === "prompt" ? 1 : -1; }
+    renderTable();
+  });
+}
+setInterval(() => { if (!document.hidden && !$("app").classList.contains("hidden")) load(); }, 60000);
+load();
+</script>
+</body>
+</html>

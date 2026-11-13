@@ -1,7 +1,7 @@
 # node:sqlite needs the flag on Node 22 (unflagged from Node 24).
 FROM node:22-bookworm-slim
 WORKDIR /app
-COPY package.json server.js ./
+COPY package.json server.js dashboard.html ./
 ENV NODE_ENV=production
 ENV PORT=8787
 ENV DATA_DIR=/app/data

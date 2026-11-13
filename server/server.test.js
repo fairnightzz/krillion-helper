@@ -289,3 +289,67 @@ test("events record cache hits, misses, stores, feedback, and promotes, and are 
   const noToken = await fetch(base + "/api/events");
   assert.equal(noToken.status, 401);
 });
+
+test("overview summarizes questions, outcomes, cache use, and krillion finds", async (t) => {
+  const base = await start(t);
+  const empty = await req(base, "/api/overview");
+  assert.equal(empty.status, 200);
+  assert.equal(empty.body.totals.questions, 0);
+  assert.deepEqual(empty.body.prompts, []);
+
+  await req(base, "/api/answers?prompt=Name%20a%20noodle%20dish&wordStyle=rare&party=true");
+  await req(base, "/api/answers", { method: "POST", body: JSON.stringify({
+    prompt: "Name a noodle dish", wordStyle: "rare", party: true,
+    rare: ["Udon", "Soba"], common: ["Pho", "Ramen"], model: "claude-haiku-4-5",
+  }) });
+  await req(base, "/api/answers?prompt=Name%20a%20noodle%20dish&wordStyle=rare&party=true");
+  await req(base, "/api/answers", { method: "POST", body: JSON.stringify({
+    prompt: "Name a noodle dish", wordStyle: "common", party: true, common: ["Pho", "Lo mein"],
+  }) });
+  for (const [text, outcome] of [["Udon", "accepted"], ["Pho", "duplicate"], ["Soba", "rejected"]]) {
+    await req(base, "/api/feedback", { method: "POST", body: JSON.stringify({
+      prompt: "Name a noodle dish", wordStyle: "rare", party: true, text, outcome,
+    }) });
+  }
+  await req(base, "/api/promote", { method: "POST", body: JSON.stringify({
+    prompt: "Name a noodle dish", text: "Khao soi", tier: "krillion",
+  }) });
+
+  const { status, body } = await req(base, "/api/overview");
+  assert.equal(status, 200);
+  const t2 = body.totals;
+  assert.equal(t2.questions, 1);
+  assert.equal(t2.variants, 2);
+  // Soba is auto-hidden after its rejection; Khao soi was promoted.
+  assert.deepEqual(t2.answers, { rare: 2, common: 4, solo: 0 });
+  assert.equal(t2.hidden, 1);
+  assert.deepEqual(t2.feedback, { accepted: 1, duplicate: 1, rejected: 1 });
+  assert.deepEqual(t2.cache, { hit: 1, miss: 1, store: 2 });
+  assert.equal(t2.krillion, 1);
+  assert.deepEqual(t2.models, { "claude-haiku-4-5": 1 });
+
+  const rare = body.prompts.find((p) => p.wordStyle === "rare");
+  assert.equal(rare.hits, 1);
+  assert.equal(rare.misses, 1);
+  assert.deepEqual(rare.krillion, ["Khao soi"]);
+  assert.equal(body.krillionFinds[0].text, "Khao soi");
+  assert.equal(body.daily.length, 1);
+  assert.equal(body.daily[0].hits, 1);
+
+  const noToken = await fetch(base + "/api/overview");
+  assert.equal(noToken.status, 401);
+});
+
+test("dashboard page is served without a token and holds no data", async (t) => {
+  const base = await start(t);
+  const root = await fetch(base + "/", { redirect: "manual" });
+  assert.equal(root.status, 302);
+  assert.equal(root.headers.get("location"), "/dashboard");
+  const page = await fetch(base + "/dashboard");
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type"), /text\/html/);
+  assert.match(page.headers.get("content-security-policy"), /connect-src 'self'/);
+  const html = await page.text();
+  assert.match(html, /<title>Krillion Cache<\/title>/);
+  assert.match(html, /\/api\/overview/);
+});

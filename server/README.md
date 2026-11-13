@@ -19,6 +19,28 @@ Data lives in SQLite at `$DATA_DIR/kch.sqlite` (a Docker volume at
 `./data` with compose). `npm --prefix . test` runs the server tests
 with the same flag.
 
+## Dashboard
+
+Open `/dashboard` on the server (for example
+`https://krillion.zhehaizhang.com/dashboard`; `/` redirects there)
+and enter the `KCH_TOKEN`. The browser remembers the token until
+you click Sign out. The page shows:
+
+- Totals: questions, stored answers (rare / common / solo),
+  cache hit rate, outcomes from play, krillion finds, and how
+  many answers are hidden.
+- Cache lookups per day (hits vs misses) and the latest
+  krillion-tier finds.
+- Every question, searchable, filterable, and sortable. Click a
+  question to see its answers with their accepted / duplicate /
+  rejected counts; hidden answers are struck through and krillion
+  finds are marked ✦.
+
+The page holds no data itself: it reads everything through
+`GET /api/overview` and `GET /api/stats`, which need the token.
+Hit, miss, krillion, and daily numbers come from the event log, so
+they cover its newest 100,000 events.
+
 ## Extension settings
 
 - **Cache server URL**: `https://krillion.zhehaizhang.com` by default (`http://localhost:8787`
@@ -130,6 +152,9 @@ curl -X POST localhost:8787/api/feedback -H "X-KCH-Token: $KCH_TOKEN" -H 'Conten
 # Promote an opponent's krillion-tier answer into the rare list at index 4 (other tiers: 400)
 curl -X POST localhost:8787/api/promote -H "X-KCH-Token: $KCH_TOKEN" -H 'Content-Type: application/json' \
   -d '{"prompt":"Name a noodle dish","text":"Udon","tier":"krillion"}'
+
+# Whole-cache summary (what the dashboard reads)
+curl "localhost:8787/api/overview" -H "X-KCH-Token: $KCH_TOKEN"
 
 # Read the event log (newest first; see "Event log" above)
 curl "localhost:8787/api/events?limit=100" -H "X-KCH-Token: $KCH_TOKEN"

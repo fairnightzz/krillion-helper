@@ -326,10 +326,134 @@ function parseParty(value) {
   return null;
 }
 
+// Whole-cache summary for the dashboard: totals plus one row per
+// stored prompt variant (prompt + word style + game). Event-derived
+// numbers (cache hits/misses, krillion finds, daily activity) cover
+// only what the event log still holds (newest MAX_EVENTS).
+function buildOverview(db) {
+  const prompts = db.prepare("SELECT * FROM prompts ORDER BY updated_at DESC").all();
+  const entryRows = db.prepare("SELECT prompt_id, list_kind, text, removed FROM entries").all();
+  const fbRows = db.prepare(
+    "SELECT prompt_id, text_key, outcome, COUNT(*) AS n FROM feedback GROUP BY prompt_id, text_key, outcome",
+  ).all();
+
+  const aggsByPrompt = new Map();
+  for (const r of fbRows) {
+    let m = aggsByPrompt.get(r.prompt_id);
+    if (!m) aggsByPrompt.set(r.prompt_id, (m = new Map()));
+    const agg = m.get(r.text_key) || { accepted: 0, duplicate: 0, rejected: 0 };
+    agg[r.outcome] = r.n;
+    m.set(r.text_key, agg);
+  }
+
+  const rows = new Map();
+  for (const p of prompts) {
+    const fb = { accepted: 0, duplicate: 0, rejected: 0 };
+    for (const agg of (aggsByPrompt.get(p.id) || new Map()).values()) {
+      fb.accepted += agg.accepted; fb.duplicate += agg.duplicate; fb.rejected += agg.rejected;
+    }
+    rows.set(p.id, {
+      key: p.prompt_key, prompt: p.prompt_text, wordStyle: p.word_style, party: p.party === 1,
+      model: p.model, createdAt: p.created_at, updatedAt: p.updated_at,
+      rare: 0, common: 0, solo: 0, removed: 0, hidden: 0,
+      ...fb, hits: 0, misses: 0, krillion: [],
+    });
+  }
+  for (const e of entryRows) {
+    const row = rows.get(e.prompt_id);
+    if (!row) continue;
+    if (e.removed === 1) { row.removed++; continue; }
+    const aggs = aggsByPrompt.get(e.prompt_id);
+    if (aggs && isAutoHidden(aggs.get(textKey(e.text)))) { row.hidden++; continue; }
+    if (row[e.list_kind] !== undefined) row[e.list_kind]++;
+  }
+
+  // Event-derived stats. Promotions always land in the rare/party
+  // variant; cache events carry their variant in detail.
+  const byVariant = new Map();
+  for (const row of rows.values()) byVariant.set(`${row.key}|${row.wordStyle}|${row.party ? 1 : 0}`, row);
+  const cache = { hit: 0, miss: 0, store: 0 };
+  const krillionFinds = [];
+  const evRows = db.prepare(
+    "SELECT created_at, kind, prompt_text, text, detail FROM events WHERE kind IN ('cache_hit','cache_miss','cache_store','promote') ORDER BY id DESC",
+  ).all();
+  for (const ev of evRows) {
+    let detail = null;
+    try { detail = ev.detail ? JSON.parse(ev.detail) : null; } catch (_) {}
+    const key = promptKey(ev.prompt_text);
+    if (ev.kind === "promote") {
+      if (!detail || !detail.stored) continue;
+      krillionFinds.push({ prompt: ev.prompt_text, text: ev.text, at: ev.created_at });
+      const row = byVariant.get(`${key}|rare|1`);
+      if (row && !row.krillion.includes(ev.text)) row.krillion.push(ev.text);
+      continue;
+    }
+    const k = ev.kind.slice("cache_".length);
+    cache[k]++;
+    if (k === "store" || !detail) continue;
+    const row = byVariant.get(`${key}|${detail.wordStyle}|${detail.party ? 1 : 0}`);
+    if (row) row[k === "hit" ? "hits" : "misses"]++;
+  }
+
+  const daily = db.prepare(
+    `SELECT substr(created_at, 1, 10) AS day,
+       SUM(kind = 'cache_hit') AS hits, SUM(kind = 'cache_miss') AS misses,
+       SUM(kind = 'feedback') AS outcomes, SUM(kind = 'submit_attempt') AS submits
+     FROM events GROUP BY day ORDER BY day DESC LIMIT 14`,
+  ).all().reverse();
+  const eventsInfo = db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS since FROM events").get();
+
+  const list = [...rows.values()];
+  const sum = (f) => list.reduce((a, r) => a + r[f], 0);
+  const models = {};
+  for (const r of list) if (r.model) models[r.model] = (models[r.model] || 0) + 1;
+  return {
+    generatedAt: nowIso(),
+    totals: {
+      questions: new Set(list.map((r) => r.key)).size,
+      variants: list.length,
+      answers: { rare: sum("rare"), common: sum("common"), solo: sum("solo") },
+      removed: sum("removed"),
+      hidden: sum("hidden"),
+      feedback: { accepted: sum("accepted"), duplicate: sum("duplicate"), rejected: sum("rejected") },
+      cache,
+      krillion: krillionFinds.length,
+      events: eventsInfo.n,
+      eventsSince: eventsInfo.since,
+      models,
+    },
+    prompts: list,
+    krillionFinds: krillionFinds.slice(0, 50),
+    daily,
+  };
+}
+
+const DASHBOARD_PATH = path.join(__dirname, "dashboard.html");
+
 async function handleRequest(db, token, req, res) {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname === "/health" && req.method === "GET") {
     return sendJson(res, 200, { ok: true });
+  }
+  // The dashboard page is a static shell with no data in it; it asks
+  // for the token and reads everything through the authed /api/*.
+  if ((url.pathname === "/" || url.pathname === "/dashboard") && req.method === "GET") {
+    if (url.pathname === "/") {
+      res.writeHead(302, { location: "/dashboard" });
+      return res.end();
+    }
+    try {
+      const html = fs.readFileSync(DASHBOARD_PATH);
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-cache",
+        "x-frame-options": "DENY",
+        "content-security-policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'",
+      });
+      return res.end(html);
+    } catch (_) {
+      return sendJson(res, 404, { error: "dashboard not installed" });
+    }
   }
   if (!url.pathname.startsWith("/api/")) {
     return sendJson(res, 404, { error: "not found" });
@@ -504,6 +628,10 @@ async function handleRequest(db, token, req, res) {
         };
       });
       return sendJson(res, 200, { prompts: out });
+    }
+
+    if (url.pathname === "/api/overview" && req.method === "GET") {
+      return sendJson(res, 200, buildOverview(db));
     }
 
     if (url.pathname === "/api/stats" && req.method === "GET") {
