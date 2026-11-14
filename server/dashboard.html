@@ -7,176 +7,234 @@
 <title>Krillion Cache</title>
 <style>
 :root {
-  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1c1a; --muted: #6f6c64; --line: #e4e1d9;
-  --accent: #2f6f8f; --rare: #7a4fb5; --common: #2f6f8f; --solo: #9a6a1c;
-  --ok: #2e7d4f; --dup: #8a7a2a; --bad: #b4412f; --krill: #d0507a;
-  --hit: #2e7d4f; --miss: #c9c4b8; --chip: #f0eee8;
+  --bg: #f5f4f0; --panel: #ffffff; --panel-2: #faf9f6; --ink: #1c1b19; --ink-2: #44423d; --muted: #77746b; --faint: #c9c5bb; --line: #e7e4dc;
+  --rare: #7048b0; --common: #2c6d8c; --solo: #976516;
+  --ok: #2b7a4b; --dup: #8d7a1f; --bad: #b23f2c; --krill: #c8436f;
+  --hit: #2b7a4b; --miss: #d6d1c5; --chip: #f1efe9; --focus: #2c6d8c;
+  --shadow: 0 1px 2px rgba(28, 27, 25, 0.04), 0 1px 1px rgba(28, 27, 25, 0.03);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #151514; --panel: #1e1e1c; --ink: #ecebe6; --muted: #9b988f; --line: #33322f;
-    --accent: #6fb0cf; --rare: #b394e0; --common: #6fb0cf; --solo: #d6a656;
-    --ok: #6cc28f; --dup: #cdbb5c; --bad: #e57f6c; --krill: #f08cae;
-    --hit: #6cc28f; --miss: #4a4843; --chip: #2a2a27;
+    --bg: #131312; --panel: #1c1c1a; --panel-2: #222220; --ink: #edece7; --ink-2: #cfcdc6; --muted: #9a978e; --faint: #55534d; --line: #2f2e2b;
+    --rare: #b597e6; --common: #73b3d1; --solo: #d9a75a;
+    --ok: #6cc28f; --dup: #d3c05e; --bad: #ec8470; --krill: #f28db0;
+    --hit: #6cc28f; --miss: #45433e; --chip: #282825; --focus: #73b3d1;
+    --shadow: none;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #131312; --panel: #1c1c1a; --panel-2: #222220; --ink: #edece7; --ink-2: #cfcdc6; --muted: #9a978e; --faint: #55534d; --line: #2f2e2b;
+  --rare: #b597e6; --common: #73b3d1; --solo: #d9a75a;
+  --ok: #6cc28f; --dup: #d3c05e; --bad: #ec8470; --krill: #f28db0;
+  --hit: #6cc28f; --miss: #45433e; --chip: #282825; --focus: #73b3d1;
+  --shadow: none;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
   background: var(--bg); color: var(--ink);
-  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-.wrap { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
-h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
-h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
-.meta { color: var(--muted); font-size: 12px; }
-.spacer { flex: 1; }
-button, input, select {
+.wrap { max-width: 1140px; margin: 0 auto; padding: 28px 16px 72px; }
+.num, td, .value { font-variant-numeric: tabular-nums; }
+button, input {
   font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line);
-  border-radius: 8px; padding: 6px 10px;
+  border-radius: 8px; padding: 7px 12px;
 }
 button { cursor: pointer; }
-button:hover { border-color: var(--muted); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
-.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
-.tile .label { color: var(--muted); font-size: 12px; }
-.tile .value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
-.tile .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
-.split { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 8px; background: var(--chip); }
+button:hover { border-color: var(--faint); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+
+/* Header */
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--krill); color: #fff; font-size: 16px; }
+h1 { font-size: 19px; margin: 0; letter-spacing: -0.015em; line-height: 1.2; }
+.status { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; }
+.linkbtn { border: 0; background: none; color: var(--muted); padding: 7px 6px; }
+.linkbtn:hover { color: var(--ink); }
+
+/* Tiles */
+.tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 980px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 16px; box-shadow: var(--shadow); min-width: 0; }
+.tile .label { color: var(--muted); font-size: 12px; font-weight: 500; }
+.tile .value { font-size: 28px; font-weight: 680; letter-spacing: -0.025em; margin-top: 2px; line-height: 1.2; }
+.tile .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.split { display: flex; height: 5px; border-radius: 3px; overflow: hidden; margin-top: 10px; background: var(--chip); gap: 2px; }
 .split span { display: block; height: 100%; }
-.row2 { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
-@media (max-width: 760px) { .row2 { grid-template-columns: 1fr; } }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
-.bars { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-top: 8px; }
-.bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; height: 100%; }
-.bar > span { display: block; width: 100%; }
-.bar .h { background: var(--hit); border-radius: 3px 3px 0 0; }
-.bar .m { background: var(--miss); }
-.bar .h + .m { border-radius: 0; }
-.bar .m:first-child { border-radius: 3px 3px 0 0; }
-.barlabels { display: flex; gap: 6px; margin-top: 4px; }
-.barlabels span { flex: 1; text-align: center; font-size: 10px; color: var(--muted); min-width: 0; overflow: hidden; }
-.legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 6px; }
-.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
-.finds { list-style: none; margin: 0; padding: 0; max-height: 190px; overflow: auto; }
-.finds li { padding: 6px 0; border-top: 1px solid var(--line); }
+
+/* Sections */
+h2 { font-size: 15px; margin: 34px 0 12px; letter-spacing: -0.01em; display: flex; align-items: baseline; gap: 10px; }
+h2 .muted { font-size: 12px; font-weight: 400; }
+.row2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+@media (max-width: 820px) { .row2 { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); min-width: 0; }
+.card-title { font-size: 13px; font-weight: 600; }
+.card-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+/* Chart */
+.chart { display: flex; align-items: flex-end; gap: 10px; height: 150px; margin-top: 14px; padding-bottom: 1px; border-bottom: 1px solid var(--line); }
+.col { flex: 1; max-width: 64px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; min-width: 0; }
+.col .total { font-size: 11px; color: var(--muted); text-align: center; margin-bottom: 3px; }
+.col .stack { display: flex; flex-direction: column; border-radius: 4px 4px 0 0; overflow: hidden; }
+.col .h { background: var(--hit); }
+.col .m { background: var(--miss); }
+.xlabels { display: flex; gap: 10px; margin-top: 5px; }
+.xlabels span { flex: 1; max-width: 64px; text-align: center; font-size: 11px; color: var(--muted); min-width: 0; white-space: nowrap; overflow: hidden; }
+.xlabels b { display: block; font-weight: 600; color: var(--ink-2); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 12px; flex-wrap: wrap; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+/* Krillion list */
+.finds { list-style: none; margin: 10px 0 0; padding: 0; max-height: 236px; overflow: auto; }
+.finds li { padding: 8px 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 0 10px; }
 .finds li:first-child { border-top: 0; }
-.finds b { color: var(--krill); }
-.finds .q { color: var(--muted); font-size: 12px; }
-.empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
-.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
-.toolbar input[type=search] { flex: 1; min-width: 180px; }
-.filters { display: flex; gap: 4px; flex-wrap: wrap; }
-.filters button { border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+.finds .word { color: var(--krill); font-weight: 650; }
+.finds .when { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.finds .q { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+
+/* Pills */
+.pill { display: inline-block; font-size: 10.5px; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.pill.k { background: color-mix(in srgb, var(--krill) 15%, transparent); color: var(--krill); }
+
+/* Toolbar */
+.toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.search { flex: 1 1 240px; min-width: 0; }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.filters button { border-radius: 999px; padding: 5px 11px; font-size: 12.5px; }
 .filters button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
-th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 240px; }
-th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
-th[data-sort]::after { content: " ↕"; opacity: 0.35; }
-th.sorted-asc::after { content: " ↑"; opacity: 1; }
-th.sorted-desc::after { content: " ↓"; opacity: 1; }
+.count { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+
+/* Table */
+.tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; white-space: normal; padding-left: 16px; width: 42%; }
+th:last-child, td:last-child { padding-right: 16px; }
+tbody tr:last-child td { border-bottom: 0; }
+th { font-size: 11.5px; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; background: var(--panel-2); }
+th:hover { color: var(--ink); }
+th .arrow { display: inline-block; width: 10px; color: var(--ink); }
+th.group-start, td.group-start { border-left: 1px solid var(--line); }
 tbody tr.q { cursor: pointer; }
-tbody tr.q:hover td { background: var(--chip); }
-tbody tr.q.open td { background: var(--chip); }
-td .zero { color: var(--line); }
-.tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--chip); color: var(--muted); margin-left: 4px; vertical-align: 1px; text-transform: uppercase; letter-spacing: 0.04em; }
-.tag.k { background: color-mix(in srgb, var(--krill) 18%, transparent); color: var(--krill); }
+tbody tr.q:hover td, tbody tr.q.open td { background: var(--panel-2); }
+tbody tr.q.open td { border-bottom-color: transparent; }
+.chev { display: inline-block; width: 14px; color: var(--faint); transition: transform 0.15s; font-size: 11px; }
+tr.open .chev { transform: rotate(90deg); color: var(--muted); }
+.zero { color: var(--faint); }
+.qtext { font-weight: 500; }
 .c-rare { color: var(--rare); } .c-common { color: var(--common); } .c-solo { color: var(--solo); }
 .c-ok { color: var(--ok); } .c-dup { color: var(--dup); } .c-bad { color: var(--bad); }
-td.detail { text-align: left; padding: 12px 14px 16px; background: var(--chip); white-space: normal; }
-.variant + .variant { margin-top: 14px; }
-.variant h3 { font-size: 12px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
-.list { margin: 6px 0 2px; }
-.list .lk { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 6px; }
-.ans { display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; margin: 3px 3px 0 0; font-size: 13px; }
-.ans small { font-size: 11px; font-variant-numeric: tabular-nums; }
-.ans.gone { opacity: 0.45; text-decoration: line-through; }
-.ans.krill { border-color: var(--krill); }
-.ans.krill::before { content: "✦"; color: var(--krill); font-size: 11px; }
-.gate { max-width: 380px; margin: 12vh auto 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-.gate h1 { margin-bottom: 6px; }
-.gate p { color: var(--muted); margin: 0 0 14px; }
-.gate input { width: 100%; margin-bottom: 10px; }
-.gate .err { color: var(--bad); font-size: 13px; min-height: 18px; }
-.bar { max-width: 48px; }
-@media (max-width: 640px) {
-  /* Phone: keep Question, Seen, Rare, Common so nothing scrolls sideways. */
-  th:nth-child(5), td:nth-child(5), th:nth-child(6), td:nth-child(6), th:nth-child(7), td:nth-child(7),
-  th:nth-child(8), td:nth-child(8), th:nth-child(9), td:nth-child(9),
-  th:nth-child(10), td:nth-child(10), th:nth-child(11), td:nth-child(11) { display: none; }
-  th:first-child, td:first-child { min-width: 0; }
-  td.detail { display: table-cell !important; }
-  th, td { padding: 8px 6px; }
+table.no-solo .col-solo { display: none; }
+@media (max-width: 720px) {
+  .opt { display: none; }
+  th, td { padding: 9px 8px; }
+  th:first-child, td:first-child { padding-left: 12px; }
 }
-.hidden { display: none !important; }
-.count { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+/* Detail */
+td.detail { text-align: left; padding: 4px 16px 18px 30px; background: var(--panel-2); white-space: normal; }
+.dmeta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+.variant { margin-top: 12px; }
+.variant h3 { font-size: 12.5px; margin: 0 0 2px; font-weight: 600; }
+.variant h3 .muted { font-weight: 400; }
+.list { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.lk { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; width: 64px; flex: none; }
+.ans { display: inline-flex; align-items: center; gap: 5px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 8px; font-size: 13px; }
+.ans small { font-size: 11px; font-weight: 600; }
+.ans.gone { opacity: 0.5; }
+.ans.gone .t { text-decoration: line-through; }
+.ans.krill { border-color: color-mix(in srgb, var(--krill) 55%, transparent); }
+.ans.krill .t::before { content: "✦ "; color: var(--krill); }
+.key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--muted); margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.key s { color: var(--muted); }
+@media (max-width: 720px) { td.detail { padding: 4px 12px 16px; } .lk { width: 100%; } }
+
+/* Gate */
+.gate { max-width: 380px; margin: 14vh auto 0; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 24px; box-shadow: var(--shadow); }
+.gate .brand { margin-bottom: 12px; }
+.gate p { color: var(--muted); margin: 0 0 16px; }
+.gate input { width: 100%; margin-bottom: 8px; }
+.gate .err { color: var(--bad); font-size: 13px; min-height: 20px; }
+.gate button { width: 100%; background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
 </style>
 </head>
 <body>
 <div id="gate" class="gate hidden">
-  <h1>Krillion Cache</h1>
-  <p>Enter the cache server token (the same one the extension uses).</p>
-  <input id="tokenInput" type="password" placeholder="Token" autocomplete="off">
+  <div class="brand"><div class="mark">✦</div><h1>Krillion Cache</h1></div>
+  <p>Enter the cache server token. It's the same token the extension uses.</p>
+  <input id="tokenInput" type="password" placeholder="Token" autocomplete="off" aria-label="Token">
   <div class="err" id="gateErr"></div>
   <button id="tokenSave">Open dashboard</button>
 </div>
 
 <div id="app" class="wrap hidden">
   <header>
-    <h1>Krillion Cache</h1>
-    <span class="meta" id="updated"></span>
+    <div class="brand">
+      <div class="mark">✦</div>
+      <div>
+        <h1>Krillion Cache</h1>
+        <div class="status" id="updated"></div>
+      </div>
+    </div>
     <span class="spacer"></span>
     <button id="refresh">Refresh</button>
-    <button id="forget" title="Forget the saved token on this browser">Sign out</button>
+    <button id="forget" class="linkbtn" title="Forget the saved token on this browser">Sign out</button>
   </header>
 
   <div class="tiles" id="tiles"></div>
 
-  <h2>Activity</h2>
-  <div class="row2">
+  <div class="row2" style="margin-top:12px">
     <div class="card">
-      <div class="meta">Cache lookups per day (last 14 days with activity)</div>
-      <div class="bars" id="bars"></div>
-      <div class="barlabels" id="barlabels"></div>
-      <div class="legend"><span><i class="dot" style="background:var(--hit)"></i>hits</span><span><i class="dot" style="background:var(--miss)"></i>misses (asked Claude)</span></div>
+      <div class="card-title">Lookups per day</div>
+      <div class="card-sub">The extension asks the cache first each time a question comes up, and again when a list runs out mid-round.</div>
+      <div class="chart" id="chart"></div>
+      <div class="xlabels" id="xlabels"></div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--hit)"></i>Answered from cache</span>
+        <span><i class="dot" style="background:var(--miss)"></i>Asked Claude</span>
+        <span>% under each day = answered from cache</span>
+      </div>
     </div>
     <div class="card">
-      <div class="meta" style="margin-bottom:6px">Krillion-tier sightings ✦ (newest first; first sighting adds it to rare)</div>
+      <div class="card-title">Krillion-tier answers <span style="color:var(--krill)">✦</span></div>
+      <div class="card-sub">Newest first. The first sighting adds the word to that question's rare list.</div>
       <ul class="finds" id="finds"></ul>
     </div>
   </div>
 
-  <h2>Questions</h2>
+  <h2>Questions <span class="muted" id="count"></span></h2>
   <div class="toolbar">
-    <input type="search" id="search" placeholder="Search questions or models">
-    <div class="filters" id="filters">
+    <input type="search" id="search" class="search" placeholder="Search questions" aria-label="Search questions">
+    <div class="filters" id="filters" role="group" aria-label="Filter questions">
       <button data-f="all" aria-pressed="true">All</button>
-      <button data-f="repeat" aria-pressed="false">Seen 2+</button>
-      <button data-f="rare" aria-pressed="false">Has rare</button>
-      <button data-f="krill" aria-pressed="false">Krillion ✦</button>
-      <button data-f="hidden" aria-pressed="false">Has hidden</button>
+      <button data-f="repeat" aria-pressed="false">Came up 2+ times</button>
+      <button data-f="krill" aria-pressed="false">Has krillion ✦</button>
       <button data-f="rejected" aria-pressed="false">Has rejections</button>
+      <button data-f="hidden" aria-pressed="false">Has hidden answers</button>
     </div>
-    <span class="count" id="count"></span>
   </div>
   <div class="tablewrap">
-    <table>
+    <table id="table">
       <thead><tr>
         <th data-sort="prompt">Question</th>
-        <th data-sort="seen" title="Times this question came up (lookups within 90 s count once)">Seen</th>
-        <th data-sort="rare" class="c-rare">Rare</th>
-        <th data-sort="common" class="c-common">Common</th>
-        <th data-sort="solo" class="c-solo">Solo</th>
-        <th data-sort="accepted" class="c-ok" title="Accepted outcomes reported from play">✓</th>
-        <th data-sort="duplicate" class="c-dup" title="Already said (answer is valid)">Dup</th>
-        <th data-sort="rejected" class="c-bad" title="Rejected (no echo)">✗</th>
-        <th data-sort="hidden" title="Auto-hidden after a rejection, or deleted by hand">Hidden</th>
-        <th data-sort="hits" title="Cache hits (from the event log)">Hits</th>
-        <th data-sort="updatedAt">Updated</th>
+        <th data-sort="seen" title="How many times this question has come up. Lookups within 90 seconds count once.">Seen</th>
+        <th data-sort="rare" class="group-start c-rare" title="Rare answers stored for this question">Rare</th>
+        <th data-sort="common" class="c-common" title="Common answers stored for this question">Common</th>
+        <th data-sort="solo" class="col-solo c-solo" title="Solo-dive answers stored for this question">Solo</th>
+        <th data-sort="accepted" class="group-start opt" title="Answers the game accepted">Accepted</th>
+        <th data-sort="duplicate" class="opt" title="Rejected as already said, so the answer is valid">Already said</th>
+        <th data-sort="rejected" class="opt" title="Rejected as not an answer (no echo)">Rejected</th>
+        <th data-sort="hidden" class="opt" title="Answers no longer served: hidden after a rejection, or deleted by hand">Hidden</th>
+        <th data-sort="hits" class="group-start opt" title="Lookups answered from the cache instead of asking Claude. Counts every lookup, including the extra ones when a list runs out mid-round, so it can be higher than Seen.">Cache hits</th>
+        <th data-sort="lastAt" class="opt">Last seen</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -186,26 +244,34 @@ td.detail { text-align: left; padding: 12px 14px 16px; background: var(--chip); 
 <script>
 "use strict";
 const TOKEN_KEY = "kch-dashboard-token";
+const COLS = 11;
 const $ = (id) => document.getElementById(id);
 let token = "";
 try { token = localStorage.getItem(TOKEN_KEY) || ""; } catch (_) {}
 let data = null;
 let questions = [];
-let sortKey = "updatedAt", sortDir = -1, filter = "all";
+let sortKey = "lastAt", sortDir = -1, filter = "all";
 const open = new Set();
+// Expanded answers, kept between re-renders so typing in the search
+// box or the minute refresh never flashes a loading state.
+const details = new Map();
 
 function el(tag, attrs, ...kids) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null) continue;
     if (k === "class") n.className = v;
     else if (k === "style") n.setAttribute("style", v);
     else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
     else n.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid instanceof Node ? kid : String(kid));
+  for (const kid of kids.flat()) if (kid != null && kid !== false && kid !== "") n.append(kid instanceof Node ? kid : String(kid));
   return n;
 }
 const fmt = (n) => Number(n || 0).toLocaleString();
+const plural = (n, word) => `${fmt(n)} ${word}${n === 1 ? "" : "s"}`;
+const pct = (a, b) => (b ? Math.round((a / b) * 100) + "%" : "–");
+const shortModel = (m) => (m || "").replace(/^claude-/, "").replace(/-\d{8}$/, "");
 function ago(iso) {
   if (!iso) return "";
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -214,7 +280,8 @@ function ago(iso) {
   if (s < 86400) return Math.floor(s / 3600) + "h ago";
   return Math.floor(s / 86400) + "d ago";
 }
-function num(n, cls) { return n ? el("span", cls ? { class: cls } : {}, fmt(n)) : el("span", { class: "zero" }, "0"); }
+function num(n, cls) { return n ? el("span", { class: cls || null }, fmt(n)) : el("span", { class: "zero" }, "–"); }
+function modeName(v) { return v.party ? (v.wordStyle === "common" ? "common-only" : "rare-first") : "solo"; }
 
 async function api(path) {
   const res = await fetch(path, { headers: token ? { "X-KCH-Token": token } : {} });
@@ -235,89 +302,116 @@ async function load() {
     data = await api("/api/overview");
   } catch (e) {
     if (e.auth) return showGate(token ? "That token was not accepted." : "");
-    $("updated").textContent = "Could not load: " + e.message;
+    $("updated").textContent = "Couldn't refresh: " + e.message;
     return;
   }
   $("gate").classList.add("hidden");
   $("app").classList.remove("hidden");
   groupQuestions();
   render();
+  // Refresh any expanded questions in the background.
+  for (const key of open) {
+    const q = questions.find((x) => x.key === key);
+    if (q) fetchDetail(q);
+  }
 }
 
-// One row per question; its variants (word style + game) sit inside.
+// One row per question; its modes (rare-first, common-only, solo)
+// are separate cache entries shown inside the expanded row.
 function groupQuestions() {
   const map = new Map();
   for (const p of data.prompts) {
     let q = map.get(p.key);
     if (!q) map.set(p.key, (q = { key: p.key, prompt: p.prompt, variants: [], rare: 0, common: 0, solo: 0,
-      accepted: 0, duplicate: 0, rejected: 0, hidden: 0, hits: 0, misses: 0, krillion: [], updatedAt: "", models: new Set(),
-      seen: 0, firstSeen: "", lastSeen: "" }));
+      accepted: 0, duplicate: 0, rejected: 0, hidden: 0, hits: 0, misses: 0, krillion: [], updatedAt: "",
+      seen: 0, firstSeen: "", lastSeen: "", lastAt: "" }));
     q.variants.push(p);
     for (const f of ["rare", "common", "solo", "accepted", "duplicate", "rejected", "hits", "misses"]) q[f] += p[f];
     q.hidden += p.hidden + p.removed;
-    q.krillion.push(...p.krillion);
-    if (p.model) q.models.add(p.model);
+    for (const k of p.krillion) if (!q.krillion.includes(k)) q.krillion.push(k);
     if (p.updatedAt > q.updatedAt) { q.updatedAt = p.updatedAt; q.prompt = p.prompt; }
   }
   questions = [...map.values()];
   for (const q of questions) {
     const e = (data.encounters || {})[q.key];
     if (e) { q.seen = e.count; q.firstSeen = e.firstSeen; q.lastSeen = e.lastSeen; }
+    q.lastAt = q.lastSeen > q.updatedAt ? q.lastSeen : q.updatedAt;
+    q.variants.sort((a, b) => modeName(a).localeCompare(modeName(b)));
   }
+}
+
+function tile(label, value, sub, bar, valueStyle) {
+  return el("div", { class: "tile" },
+    el("div", { class: "label" }, label),
+    el("div", { class: "value", style: valueStyle || null }, value),
+    sub ? el("div", { class: "sub" }, sub) : null,
+    bar || null);
+}
+function split(parts) {
+  const total = parts.reduce((a, [n]) => a + n, 0);
+  return el("div", { class: "split" }, ...parts.filter(([n]) => n > 0)
+    .map(([n, color, title]) => el("span", { style: `flex:${total ? n / total : 0};background:${color}`, title })));
 }
 
 function render() {
   const t = data.totals;
-  $("updated").textContent = "Updated " + new Date(data.generatedAt).toLocaleTimeString();
+  const models = Object.keys(t.models).map(shortModel);
+  $("updated").textContent = `Updated ${new Date(data.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · refreshes every minute` +
+    (models.length ? ` · answers by ${models.join(", ")}` : "");
+
   const answers = t.answers.rare + t.answers.common + t.answers.solo;
   const lookups = t.cache.hit + t.cache.miss;
-  const fbTotal = t.feedback.accepted + t.feedback.duplicate + t.feedback.rejected;
-  const pct = (a, b) => b ? Math.round((a / b) * 100) + "%" : "–";
-  const seg = (n, total, color) => el("span", { style: `width:${total ? (n / total) * 100 : 0}%;background:${color}` });
-  const models = Object.entries(t.models).sort((a, b) => b[1] - a[1]).map(([m]) => m.replace(/^claude-/, "").replace(/-\d{8}$/, ""));
+  const judged = t.feedback.accepted + t.feedback.rejected;
   $("tiles").replaceChildren(
-    el("div", { class: "tile" }, el("div", { class: "label" }, "Questions"), el("div", { class: "value" }, fmt(t.questions)),
-      el("div", { class: "sub" }, models.length ? "via " + models.join(", ") : "no model lists yet")),
-    el("div", { class: "tile" }, el("div", { class: "label" }, "Questions seen"), el("div", { class: "value" }, fmt(t.encounters)),
-      el("div", { class: "sub" }, fmt(t.repeatedQuestions) + " came up more than once")),
-    el("div", { class: "tile" }, el("div", { class: "label" }, "Stored answers"), el("div", { class: "value" }, fmt(answers)),
-      el("div", { class: "sub" }, el("span", { class: "c-rare" }, fmt(t.answers.rare) + " rare"), " · ",
-        el("span", { class: "c-common" }, fmt(t.answers.common) + " common"), t.answers.solo ? [" · ", el("span", { class: "c-solo" }, fmt(t.answers.solo) + " solo")] : ""),
-      el("div", { class: "split" }, seg(t.answers.rare, answers, "var(--rare)"), seg(t.answers.common, answers, "var(--common)"), seg(t.answers.solo, answers, "var(--solo)"))),
-    el("div", { class: "tile" }, el("div", { class: "label" }, "Cache hit rate"), el("div", { class: "value" }, pct(t.cache.hit, lookups)),
-      el("div", { class: "sub" }, fmt(t.cache.hit) + " hits / " + fmt(t.cache.miss) + " misses"),
-      el("div", { class: "split" }, seg(t.cache.hit, lookups, "var(--hit)"), seg(t.cache.miss, lookups, "var(--miss)"))),
-    el("div", { class: "tile" }, el("div", { class: "label" }, "Outcomes from play"), el("div", { class: "value" }, fmt(fbTotal)),
-      el("div", { class: "sub" }, el("span", { class: "c-ok" }, fmt(t.feedback.accepted) + " ✓"), " · ",
-        el("span", { class: "c-dup" }, fmt(t.feedback.duplicate) + " dup"), " · ", el("span", { class: "c-bad" }, fmt(t.feedback.rejected) + " ✗")),
-      el("div", { class: "split" }, seg(t.feedback.accepted, fbTotal, "var(--ok)"), seg(t.feedback.duplicate, fbTotal, "var(--dup)"), seg(t.feedback.rejected, fbTotal, "var(--bad)"))),
-    el("div", { class: "tile" }, el("div", { class: "label" }, "Krillion finds ✦"), el("div", { class: "value", style: "color:var(--krill)" }, fmt(t.krillion)),
-      el("div", { class: "sub" }, fmt(t.krillionOwn || 0) + " by you · " + fmt(t.krillionSightings || 0) + " sightings · " + fmt(t.hidden + t.removed) + " answers hidden")),
+    tile("Questions", fmt(t.questions),
+      `came up ${plural(t.encounters, "time")}, ${fmt(t.repeatedQuestions)} more than once`),
+    tile("Cache hit rate", pct(t.cache.hit, lookups),
+      `${fmt(t.cache.hit)} of ${plural(lookups, "lookup")}; the rest asked Claude`,
+      split([[t.cache.hit, "var(--hit)", "from cache"], [t.cache.miss, "var(--miss)", "asked Claude"]])),
+    tile("Stored answers", fmt(answers),
+      [el("span", { class: "c-rare" }, fmt(t.answers.rare) + " rare"), " · ", el("span", { class: "c-common" }, fmt(t.answers.common) + " common"),
+        t.answers.solo ? [" · ", el("span", { class: "c-solo" }, fmt(t.answers.solo) + " solo")] : null,
+        t.hidden + t.removed ? el("div", {}, fmt(t.hidden + t.removed) + " hidden after a rejection") : null],
+      split([[t.answers.rare, "var(--rare)", "rare"], [t.answers.common, "var(--common)", "common"], [t.answers.solo, "var(--solo)", "solo"]])),
+    tile("Accepted by the game", pct(t.feedback.accepted, judged),
+      [el("div", { class: "c-ok" }, fmt(t.feedback.accepted) + " accepted"),
+        el("div", {}, el("span", { class: "c-bad" }, fmt(t.feedback.rejected) + " rejected"), " · " + fmt(t.feedback.duplicate) + " already said")],
+      split([[t.feedback.accepted, "var(--ok)", "accepted"], [t.feedback.duplicate, "var(--dup)", "already said"], [t.feedback.rejected, "var(--bad)", "rejected"]])),
+    tile("Krillion-tier answers ✦", fmt(t.krillion),
+      `${fmt(t.krillionOwn || 0)} by you · seen ${plural(t.krillionSightings || 0, "time")}`, null, "color:var(--krill)"),
   );
 
-  const days = data.daily;
+  const days = data.daily.slice(-10);
   const max = Math.max(1, ...days.map((d) => d.hits + d.misses));
-  $("bars").replaceChildren(...(days.length ? days.map((d) => el("div", { class: "bar", title: `${d.day}: ${d.hits} hits, ${d.misses} misses, ${d.submits} submits` },
-    d.hits ? el("span", { class: "h", style: `height:${(d.hits / max) * 100}%` }) : null,
-    d.misses ? el("span", { class: "m", style: `height:${(d.misses / max) * 100}%` }) : null,
-  )) : [el("div", { class: "empty" }, "No activity yet.")]));
-  $("barlabels").replaceChildren(...days.map((d) => el("span", {}, d.day.slice(5))));
+  const fmtDay = (d) => new Date(d + "T12:00:00Z").toLocaleDateString([], { month: "short", day: "numeric" });
+  $("chart").replaceChildren(...(days.length ? days.map((d) => {
+    const total = d.hits + d.misses;
+    return el("div", { class: "col", title: `${fmtDay(d.day)}: ${d.hits} from cache, ${d.misses} asked Claude` },
+      el("div", { class: "total" }, total ? fmt(total) : ""),
+      el("div", { class: "stack", style: `height:${(total / max) * 100}%` },
+        d.hits ? el("span", { class: "h", style: `flex:${d.hits}` }) : null,
+        d.misses ? el("span", { class: "m", style: `flex:${d.misses}` }) : null));
+  }) : [el("div", { class: "empty" }, "No lookups yet.")]));
+  $("xlabels").replaceChildren(...days.map((d) => el("span", {}, el("b", {}, fmtDay(d.day)), pct(d.hits, d.hits + d.misses))));
 
   $("finds").replaceChildren(...(data.krillionFinds.length ? data.krillionFinds.map((f) =>
-    el("li", {}, el("b", {}, f.text), f.source === "own" ? el("span", { class: "tag k" }, "you") : null,
-      f.repeat ? el("span", { class: "tag", title: "Already in the rare list when it was seen" }, "repeat") : null, " ",
-      el("span", { class: "meta" }, ago(f.at)), el("div", { class: "q" }, f.prompt)))
+    el("li", {},
+      el("div", {}, el("span", { class: "word" }, f.text),
+        f.source === "own" ? el("span", { class: "pill k" }, "you") : null,
+        f.repeat ? el("span", { class: "pill", title: "Already in the rare list when it was seen" }, "seen before") : null),
+      el("span", { class: "when" }, ago(f.at)),
+      el("div", { class: "q" }, f.prompt)))
     : [el("li", { class: "empty" }, "None yet.")]));
 
+  $("table").classList.toggle("no-solo", !t.answers.solo);
   renderTable();
 }
 
 function renderTable() {
   const q = $("search").value.trim().toLowerCase();
-  let list = questions.filter((x) => {
-    if (q && !x.prompt.toLowerCase().includes(q) && ![...x.models].some((m) => m.toLowerCase().includes(q))) return false;
+  const list = questions.filter((x) => {
+    if (q && !x.prompt.toLowerCase().includes(q)) return false;
     if (filter === "repeat") return x.seen > 1;
-    if (filter === "rare") return x.rare > 0;
     if (filter === "krill") return x.krillion.length > 0;
     if (filter === "hidden") return x.hidden > 0;
     if (filter === "rejected") return x.rejected > 0;
@@ -326,71 +420,93 @@ function renderTable() {
   list.sort((a, b) => {
     const av = a[sortKey], bv = b[sortKey];
     const c = typeof av === "string" ? av.localeCompare(bv) : av - bv;
-    return c * sortDir;
+    return c * sortDir || b.lastAt.localeCompare(a.lastAt);
   });
   for (const th of document.querySelectorAll("th[data-sort]")) {
-    th.classList.toggle("sorted-asc", th.dataset.sort === sortKey && sortDir === 1);
-    th.classList.toggle("sorted-desc", th.dataset.sort === sortKey && sortDir === -1);
+    let arrow = th.querySelector(".arrow");
+    if (!arrow) { arrow = el("span", { class: "arrow" }); th.append(arrow); }
+    arrow.textContent = th.dataset.sort === sortKey ? (sortDir === 1 ? " ↑" : " ↓") : "";
   }
-  $("count").textContent = `${list.length} of ${questions.length}`;
+  $("count").textContent = list.length === questions.length ? fmt(questions.length) : `${fmt(list.length)} of ${fmt(questions.length)}`;
   const rows = [];
   for (const x of list) {
-    const styles = x.variants.map((v) => v.party ? v.wordStyle : "solo " + v.wordStyle);
-    rows.push(el("tr", { class: "q" + (open.has(x.key) ? " open" : ""), onclick: () => toggle(x.key) },
-      el("td", {}, x.prompt, x.krillion.length ? el("span", { class: "tag k" }, "✦ " + x.krillion.length) : null,
-        ...styles.map((s) => el("span", { class: "tag" }, s))),
-      el("td", { title: x.lastSeen ? "Last seen " + new Date(x.lastSeen).toLocaleString() : "" }, num(x.seen)),
-      el("td", {}, num(x.rare, "c-rare")), el("td", {}, num(x.common, "c-common")), el("td", {}, num(x.solo, "c-solo")),
-      el("td", {}, num(x.accepted, "c-ok")), el("td", {}, num(x.duplicate, "c-dup")), el("td", {}, num(x.rejected, "c-bad")),
-      el("td", {}, num(x.hidden)), el("td", {}, num(x.hits)),
-      el("td", { title: new Date(x.updatedAt).toLocaleString() }, el("span", { class: "meta" }, ago(x.updatedAt))),
+    const isOpen = open.has(x.key);
+    rows.push(el("tr", { class: "q" + (isOpen ? " open" : ""), onclick: () => toggle(x), "aria-expanded": String(isOpen) },
+      el("td", {}, el("span", { class: "chev" }, "▶"), el("span", { class: "qtext" }, x.prompt),
+        x.krillion.length ? el("span", { class: "pill k", title: x.krillion.join(", ") }, "✦ " + x.krillion.length) : null),
+      el("td", {}, num(x.seen)),
+      el("td", { class: "group-start" }, num(x.rare, "c-rare")), el("td", {}, num(x.common, "c-common")),
+      el("td", { class: "col-solo" }, num(x.solo, "c-solo")),
+      el("td", { class: "group-start opt" }, num(x.accepted, "c-ok")), el("td", { class: "opt" }, num(x.duplicate, "c-dup")),
+      el("td", { class: "opt" }, num(x.rejected, "c-bad")), el("td", { class: "opt" }, num(x.hidden)),
+      el("td", { class: "group-start opt" }, num(x.hits)),
+      el("td", { class: "opt muted", title: new Date(x.lastAt).toLocaleString() }, ago(x.lastAt)),
     ));
-    if (open.has(x.key)) {
-      const cell = el("td", { class: "detail", colspan: "11" }, el("div", { class: "empty" }, "Loading answers…"));
-      rows.push(el("tr", {}, cell));
-      loadDetail(x, cell);
+    if (isOpen) {
+      const cell = el("td", { class: "detail", colspan: String(COLS) });
+      cell.dataset.key = x.key;
+      fillDetail(x, cell);
+      rows.push(el("tr", { class: "detail-row" }, cell));
     }
   }
-  if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: "11", class: "empty" }, questions.length ? "No questions match." : "The cache is empty.")));
+  if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: String(COLS), class: "empty" }, questions.length ? "No questions match." : "The cache is empty.")));
   $("rows").replaceChildren(...rows);
 }
 
-function toggle(key) {
-  if (open.has(key)) open.delete(key); else open.add(key);
+function toggle(x) {
+  if (open.has(x.key)) open.delete(x.key);
+  else { open.add(x.key); if (!details.has(x.key)) fetchDetail(x); }
   renderTable();
 }
 
-async function loadDetail(x, cell) {
-  const parts = [];
+async function fetchDetail(x) {
+  const out = [];
   for (const v of x.variants) {
-    let stats;
     try {
-      stats = await api(`/api/stats?prompt=${encodeURIComponent(v.prompt)}&wordStyle=${v.wordStyle}&party=${v.party}`);
+      out.push({ v, stats: await api(`/api/stats?prompt=${encodeURIComponent(v.prompt)}&wordStyle=${v.wordStyle}&party=${v.party}`) });
     } catch (e) {
-      parts.push(el("div", { class: "empty" }, "Could not load: " + e.message));
-      continue;
+      out.push({ v, error: e.message });
     }
+  }
+  details.set(x.key, out);
+  const cell = [...document.querySelectorAll("td.detail")].find((c) => c.dataset.key === x.key);
+  if (cell) fillDetail(x, cell);
+}
+
+function fillDetail(x, cell) {
+  const d = details.get(x.key);
+  if (!d) return cell.replaceChildren(el("div", { class: "empty" }, "Loading answers…"));
+  const parts = [];
+  if (x.seen) {
+    parts.push(el("div", { class: "dmeta" },
+      `Came up ${plural(x.seen, "time")} · first ${new Date(x.firstSeen).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · last ${ago(x.lastSeen)}`));
+  }
+  for (const { v, stats, error } of d) {
+    const head = el("h3", {}, modeName(v) + " lists", el("span", { class: "muted" },
+      [v.model ? " · " + shortModel(v.model) : "", ` · ${plural(v.hits, "cache hit")}, ${plural(v.misses, "Claude call")}`].join("")));
+    if (error) { parts.push(el("div", { class: "variant" }, head, el("div", { class: "empty" }, "Couldn't load: " + error))); continue; }
     const krill = new Set(v.krillion.map((s) => s.toLowerCase()));
     const byKind = { rare: [], common: [], solo: [] };
     for (const a of stats.answers) (byKind[a.listKind] || (byKind[a.listKind] = [])).push(a);
-    const label = (v.party ? "Party" : "Solo") + " · " + v.wordStyle + " style" + (v.model ? " · " + v.model : "") +
-      ` · ${v.hits} hits, ${v.misses} misses`;
-    parts.push(el("div", { class: "variant" }, el("h3", {}, label),
+    parts.push(el("div", { class: "variant" }, head,
       ...Object.entries(byKind).filter(([, arr]) => arr.length).map(([kind, arr]) => el("div", { class: "list" },
         el("span", { class: "lk c-" + kind }, kind),
         ...arr.map((a) => {
           const gone = a.removed || a.autoHidden;
-          const counts = [];
-          if (a.accepted) counts.push(el("small", { class: "c-ok" }, a.accepted + "✓"));
-          if (a.duplicate) counts.push(el("small", { class: "c-dup" }, a.duplicate + "d"));
-          if (a.rejected) counts.push(el("small", { class: "c-bad" }, a.rejected + "✗"));
-          const title = a.removed ? "Deleted by hand" : a.autoHidden ? "Auto-hidden after a rejection" : "";
-          return el("span", { class: "ans" + (gone ? " gone" : "") + (krill.has(a.text.toLowerCase()) ? " krill" : ""), title }, a.text, ...counts);
-        }),
-      ))));
+          const title = a.removed ? "Deleted by hand" : a.autoHidden ? "Hidden after a rejection" : null;
+          return el("span", { class: "ans" + (gone ? " gone" : "") + (krill.has(a.text.toLowerCase()) ? " krill" : ""), title },
+            el("span", { class: "t" }, a.text),
+            a.accepted ? el("small", { class: "c-ok" }, a.accepted + "✓") : null,
+            a.duplicate ? el("small", { class: "c-dup" }, a.duplicate + "↻") : null,
+            a.rejected ? el("small", { class: "c-bad" }, a.rejected + "✗") : null);
+        })))));
   }
-  if (x.seen) parts.unshift(el("div", { class: "meta", style: "margin-bottom:10px" },
-    `Seen ${x.seen} time${x.seen === 1 ? "" : "s"} · first ${new Date(x.firstSeen).toLocaleString()} · last ${ago(x.lastSeen)}`));
+  parts.push(el("div", { class: "key" },
+    el("span", {}, el("b", { class: "c-ok" }, "✓"), " accepted"),
+    el("span", {}, el("b", { class: "c-dup" }, "↻"), " already said"),
+    el("span", {}, el("b", { class: "c-bad" }, "✗"), " rejected"),
+    el("span", {}, el("s", {}, "struck"), " hidden, no longer served"),
+    el("span", {}, el("b", { style: "color:var(--krill)" }, "✦"), " krillion-tier")));
   cell.replaceChildren(...parts);
 }
 
