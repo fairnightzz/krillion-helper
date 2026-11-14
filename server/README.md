@@ -119,7 +119,10 @@ different form of your answer ("donut" as "doughnut", "zorilla" as
 submission and the turn passing nobody else can answer: the first
 new accepted bubble in that window is yours, whatever it says. A
 rejection ends that window, and so does the turn passing (after a
-1-second allowance for the bubble to land), in every mode. Your own `bubble_seen` events carry
+1-second allowance for the bubble to land), in every mode. When your
+own answer is krillion-tier, the promotion uses what you typed (it
+came from your list), not the game's display form, so "chopine"
+shown as "chopines" never adds a near-duplicate entry. Your own `bubble_seen` events carry
 `sent` (what you typed, when it differs) and `sameSeat` (whether
 the bubble is the element that showed your live draft), a
 diagnostic for identifying your seat directly.

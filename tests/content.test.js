@@ -1069,7 +1069,8 @@ test("our answer is recognised as ours however the game rewrites it", async (t) 
   addPartyBubble(g, { text: "Zork", tier: "krillion" });
   await sleep(700);
   const promotes = g.calls.filter((c) => c.type === "promoteKrillion");
-  assert.deepEqual(promotes.map((c) => [c.text, c.source]).sort(), [["Striped Polecat", "own"], ["Zork", "other"]]);
+  // Promoted as typed ("ab", from our list), not as displayed.
+  assert.deepEqual(promotes.map((c) => [c.text, c.source]).sort(), [["Zork", "other"], ["ab", "own"]]);
   const reports = g.calls.filter((c) => c.type === "reportOutcome");
   assert.ok(!reports.some((c) => c.text === "Striped Polecat" && c.source === "other"), "our rewritten answer is not an opponent's");
   const seen = g.calls.find((c) => c.type === "logEvent" && c.kind === "bubble_seen" && c.text === "Striped Polecat");
@@ -1123,7 +1124,7 @@ test("bubbles left over when the question changes are credited to the question t
   addPartyBubble(g, { text: "Xylophone Stew", tier: "krillion" });
   await sleep(700);
   const promotes = g.calls.filter((c) => c.type === "promoteKrillion").map((c) => [c.text, c.source, c.prompt]);
-  assert.ok(promotes.some((p) => p[0] === "Xylophone Stew" && p[1] === "own" && p[2] === "Name a second dish"), JSON.stringify(promotes));
+  assert.ok(promotes.some((p) => p[0] === "xy" && p[1] === "own" && p[2] === "Name a second dish"), JSON.stringify(promotes));
   reports = g.calls.filter((c) => c.type === "reportOutcome");
   assert.ok(reports.some((c) => c.text === "xy" && c.source === "own" && c.outcome === "accepted" && c.prompt === "Name a second dish"));
   assert.ok(!reports.some((c) => c.prompt === "Name a third dish"), "nothing is reported against the third question");
@@ -1152,7 +1153,7 @@ test("an earlier answer of ours still on screen does not stand in for the pendin
   addPartyBubble(g, { text: "Cod Stew", tier: "krillion" });
   await sleep(700);
   const promotes = g.calls.filter((c) => c.type === "promoteKrillion").map((c) => [c.text, c.source, c.prompt]);
-  assert.deepEqual(promotes, [["Cod Stew", "own", "Name a noodle dish"]]);
+  assert.deepEqual(promotes, [["cd", "own", "Name a noodle dish"]]);
   const reports = g.calls.filter((c) => c.type === "reportOutcome");
   assert.ok(reports.some((c) => c.text === "cd" && c.source === "own" && c.outcome === "accepted" && c.prompt === "Name a noodle dish"));
   assert.ok(!reports.some((c) => c.prompt === "Name a second dish"), "nothing is reported against the new question");

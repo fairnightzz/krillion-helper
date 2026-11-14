@@ -1179,7 +1179,10 @@
           sent: answersPending && prev.pending && norm(prev.pending) !== t ? prev.pending : undefined,
           sameSeat: state.mySayEl ? state.mySayEl === el : null,
         });
-        if (tier === "krillion") promoteKrillion(el.textContent, "own", prev);
+        // Promote what we typed (it came from our list), not the game's
+        // display form: "chopine" shown as "chopines" must not add a
+        // second, near-duplicate entry next to "Chopine".
+        if (tier === "krillion") promoteKrillion(answersPending && prev.pending ? prev.pending : el.textContent, "own", prev);
       }
       // The bubble is the acceptance of the submission that ended
       // the round; the turn-pass path never ran for it.
@@ -1268,7 +1271,9 @@
           sent: pending && state.correctedPending === pending && norm(pending) !== t ? pending : undefined,
           sameSeat: state.mySayEl ? state.mySayEl === el : null,
         });
-        if (tier === "krillion") promoteKrillion(el.textContent, "own");
+        // Promote what we typed, not the game's display form (see above).
+        const typed = pending && state.correctedPending === pending ? pending : el.textContent;
+        if (tier === "krillion") promoteKrillion(typed, "own");
       }
     });
     // Rejected answers ("bad" bubbles) count as tried too, for every
