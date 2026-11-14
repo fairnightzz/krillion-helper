@@ -339,6 +339,16 @@ test("overview summarizes questions, outcomes, cache use, and krillion finds", a
   assert.equal(body.krillionFinds[0].text, "Khao soi");
   assert.equal(body.krillionFinds[0].source, "own");
   assert.equal(t2.krillionOwn, 1);
+  // Seeing the same krillion answer again is listed as a repeat
+  // sighting but is still one distinct find.
+  await req(base, "/api/promote", { method: "POST", body: JSON.stringify({
+    prompt: "Name a noodle dish", text: "khao soi", tier: "krillion", source: "other",
+  }) });
+  const again = (await req(base, "/api/overview")).body;
+  assert.equal(again.totals.krillion, 1);
+  assert.equal(again.totals.krillionSightings, 2);
+  assert.equal(again.krillionFinds[0].repeat, true);
+  assert.equal(again.krillionFinds[1].repeat, false);
   assert.equal(body.daily.length, 1);
   assert.equal(body.daily[0].hits, 1);
 

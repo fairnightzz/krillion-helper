@@ -145,7 +145,7 @@ td.detail { text-align: left; padding: 12px 14px 16px; background: var(--chip); 
       <div class="legend"><span><i class="dot" style="background:var(--hit)"></i>hits</span><span><i class="dot" style="background:var(--miss)"></i>misses (asked Claude)</span></div>
     </div>
     <div class="card">
-      <div class="meta" style="margin-bottom:6px">Krillion-tier finds ✦ (added to rare; yours are tagged)</div>
+      <div class="meta" style="margin-bottom:6px">Krillion-tier sightings ✦ (newest first; first sighting adds it to rare)</div>
       <ul class="finds" id="finds"></ul>
     </div>
   </div>
@@ -292,7 +292,7 @@ function render() {
         el("span", { class: "c-dup" }, fmt(t.feedback.duplicate) + " dup"), " · ", el("span", { class: "c-bad" }, fmt(t.feedback.rejected) + " ✗")),
       el("div", { class: "split" }, seg(t.feedback.accepted, fbTotal, "var(--ok)"), seg(t.feedback.duplicate, fbTotal, "var(--dup)"), seg(t.feedback.rejected, fbTotal, "var(--bad)"))),
     el("div", { class: "tile" }, el("div", { class: "label" }, "Krillion finds ✦"), el("div", { class: "value", style: "color:var(--krill)" }, fmt(t.krillion)),
-      el("div", { class: "sub" }, fmt(t.krillionOwn || 0) + " by you · " + fmt(t.hidden + t.removed) + " answers hidden")),
+      el("div", { class: "sub" }, fmt(t.krillionOwn || 0) + " by you · " + fmt(t.krillionSightings || 0) + " sightings · " + fmt(t.hidden + t.removed) + " answers hidden")),
   );
 
   const days = data.daily;
@@ -304,7 +304,8 @@ function render() {
   $("barlabels").replaceChildren(...days.map((d) => el("span", {}, d.day.slice(5))));
 
   $("finds").replaceChildren(...(data.krillionFinds.length ? data.krillionFinds.map((f) =>
-    el("li", {}, el("b", {}, f.text), f.source === "own" ? el("span", { class: "tag k" }, "you") : null, " ",
+    el("li", {}, el("b", {}, f.text), f.source === "own" ? el("span", { class: "tag k" }, "you") : null,
+      f.repeat ? el("span", { class: "tag", title: "Already in the rare list when it was seen" }, "repeat") : null, " ",
       el("span", { class: "meta" }, ago(f.at)), el("div", { class: "q" }, f.prompt)))
     : [el("li", { class: "empty" }, "None yet.")]));
 

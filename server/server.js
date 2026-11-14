@@ -440,8 +440,14 @@ function buildOverview(db) {
     try { detail = ev.detail ? JSON.parse(ev.detail) : null; } catch (_) {}
     const key = promptKey(ev.prompt_text);
     if (ev.kind === "promote") {
-      if (!detail || !detail.stored) continue;
-      krillionFinds.push({ prompt: ev.prompt_text, text: ev.text, at: ev.created_at, source: detail.source === "own" ? "own" : "other" });
+      // Every krillion-tier sighting counts, including repeats of a
+      // word already in the rare list (stored: false, already: true);
+      // only a promotion refused by a manual delete is left out.
+      if (!detail || detail.removed) continue;
+      krillionFinds.push({
+        prompt: ev.prompt_text, text: ev.text, at: ev.created_at,
+        source: detail.source === "own" ? "own" : "other", repeat: !detail.stored,
+      });
       const row = byVariant.get(`${key}|rare|1`);
       if (row && !row.krillion.includes(ev.text)) row.krillion.push(ev.text);
       continue;
@@ -482,8 +488,11 @@ function buildOverview(db) {
       hidden: sum("hidden"),
       feedback: { accepted: sum("accepted"), duplicate: sum("duplicate"), rejected: sum("rejected") },
       cache,
-      krillion: krillionFinds.length,
-      krillionOwn: krillionFinds.filter((f) => f.source === "own").length,
+      // Distinct answers (question + word), not sightings.
+      krillion: new Set(krillionFinds.map((f) => promptKey(f.prompt) + "|" + textKey(f.text))).size,
+      krillionOwn: new Set(krillionFinds.filter((f) => f.source === "own")
+        .map((f) => promptKey(f.prompt) + "|" + textKey(f.text))).size,
+      krillionSightings: krillionFinds.length,
       encounters: encounterTotals.total,
       repeatedQuestions: encounterTotals.repeated,
       events: eventsInfo.n,
@@ -492,7 +501,7 @@ function buildOverview(db) {
     },
     prompts: list,
     encounters,
-    krillionFinds: krillionFinds.slice(0, 50),
+    krillionFinds: krillionFinds.slice(0, 100),
     daily,
   };
 }

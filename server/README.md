@@ -31,7 +31,9 @@ you click Sign out. The page shows:
   cache hit rate, outcomes from play, krillion finds, and how
   many answers are hidden.
 - Cache lookups per day (hits vs misses) and the latest
-  krillion-tier finds.
+  krillion-tier sightings, yours tagged "you". A word seen again
+  after it was already in the rare list is tagged "repeat"; the
+  Krillion finds tile counts distinct answers.
 - Every question, searchable, filterable, and sortable, with a
   **Seen** count: how many times that question has come up. Every
   cache lookup is a sighting, but lookups for the same question
