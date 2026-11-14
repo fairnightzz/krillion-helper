@@ -110,8 +110,15 @@ the extension promotes it into the rare list, nestled at index 4
 (5th place; shorter lists append at the end, still in the top 5).
 This covers opponents' answers and your own (your own bubble is
 recognised from what you submitted that round, whether the
-extension typed it or you did, including the game's corrected
-spelling of it: "donut" shown as "doughnut").
+extension typed it or you did). The game sometimes shows a
+different form of your answer ("donut" as "doughnut", "zorilla" as
+"striped polecat"). Party play is turn-based, so between your
+submission and the turn passing nobody else can answer: the first
+new accepted bubble in that window is yours, whatever it says. A
+rejection ends that window. Your own `bubble_seen` events carry
+`sent` (what you typed, when it differs) and `sameSeat` (whether
+the bubble is the element that showed your live draft), a
+diagnostic for identifying your seat directly.
 
 When an answer ends a category, the next question appears at once
 while that answer's bubble is still on screen or about to show.

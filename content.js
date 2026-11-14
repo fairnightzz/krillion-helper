@@ -55,7 +55,8 @@
     ownTiers: new Set(),         // party: own bubbles whose tier was already logged this round
     prevRound: null,             // party: the round that just ended, for its late bubbles
     lastPending: null,           // party: { text, at } of a submission still awaiting its result when the prompt vanished
-    correctedPending: null,      // party: the pending submission whose corrected bubble was already matched
+    correctedPending: null,      // party: the pending submission whose shown bubble was already matched
+    mySayEl: null,               // party: our seat's bubble element, seen holding our live draft (diagnostic)
     promotedKrillions: new Set(), // party: norms already promoted this round
     copied: null,
     copiedTimer: null,
@@ -1097,25 +1098,6 @@
   // fastest first answer in the logs took over 1 s), so any bubble in
   // this window is the previous round's last answer, whoever played it.
   const PREV_ROUND_SURE_MS = 1000;
-  // Whether a shown answer looks like the game's correction of what
-  // we sent: "regency" shown as "regency era" (one contains the
-  // other), or "donut" shown as "doughnut" (a small edit). An
-  // unrelated word is someone else's, whatever the timing.
-  function looksLikeCorrection(sent, shown) {
-    const a = norm(sent), b = norm(shown);
-    if (!a || !b || a === b) return false;
-    if (a.includes(b) || b.includes(a)) return true;
-    const m = a.length, n = b.length;
-    let prev = Array.from({ length: n + 1 }, (_, j) => j);
-    for (let i = 1; i <= m; i++) {
-      const cur = [i];
-      for (let j = 1; j <= n; j++) {
-        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-      }
-      prev = cur;
-    }
-    return prev[n] <= Math.ceil(0.4 * Math.max(m, n));
-  }
   function snapshotPrevRound() {
     if (!state.prompt || !isParty()) return null;
     const stale = new Map();
@@ -1136,7 +1118,9 @@
       promoted: state.promotedKrillions,
       startedAt: Date.now(),
       stale,
-      claimed: new Map(),
+      // Shared across rounds: a bubble credited to an earlier question
+      // stays claimed if it is still on screen at a later change.
+      claimed: state.prevRound ? state.prevRound.claimed : new WeakMap(),
     };
   }
   // Whether this bubble belongs to the previous round; if so, it is
@@ -1144,7 +1128,7 @@
   // bubble counts when it was already on screen at the change, when
   // it shows up within PREV_ROUND_SURE_MS of it, or when it shows up
   // within the grace period and is our own answer:
-  // as submitted, or as the game corrected it (the round's pending
+  // as submitted, or however the game rewrote it (the round's pending
   // submission had no bubble yet, and nobody else could answer
   // during our turn).
   function claimForPrevRound(el, t, accepted) {
@@ -1157,7 +1141,8 @@
     const tooSoon = age <= PREV_ROUND_SURE_MS;
     if (!staleEl && !inGrace) return false;
     let own = prev.ownPlayed.has(t);
-    if (!own && accepted && inGrace && prev.pending && !prev.pendingMatched && !prev.said.has(t) && looksLikeCorrection(prev.pending, el.textContent)) {
+    if (own && prev.pending) prev.pendingMatched = true;
+    if (!own && accepted && inGrace && prev.pending && !prev.pendingMatched && !prev.said.has(t)) {
       own = true; // the pending answer, as the game spelled it
       prev.ownPlayed.add(t);
       prev.pendingMatched = true;
@@ -1169,7 +1154,11 @@
       if (!prev.ownTiers.has(t)) {
         prev.ownTiers.add(t);
         const tier = bubbleTier(el);
-        elog("bubble_seen", { prompt: prev.prompt, text: el.textContent, tier: tier || null, outcome: "accepted", own: true, lateBubble: true });
+        elog("bubble_seen", {
+          prompt: prev.prompt, text: el.textContent, tier: tier || null, outcome: "accepted", own: true, lateBubble: true,
+          sent: prev.pending && norm(prev.pending) !== t ? prev.pending : undefined,
+          sameSeat: state.mySayEl ? state.mySayEl === el : null,
+        });
         if (tier === "krillion") promoteKrillion(el.textContent, "own", prev);
       }
       // The bubble is the acceptance of the submission that ended
@@ -1195,15 +1184,24 @@
     // "already used" and blocked its submit. Exclude caret bubbles;
     // accepted ("ok"/"rest") and rejected ("bad", via the banner below)
     // answers still count.
-    // While our submission awaits its result the turn is still ours,
-    // so a new accepted bubble now is our answer, possibly in the
-    // game's corrected spelling ("donut" shown as "doughnut").
+    // While our submission awaits its result the turn is still ours
+    // and nobody else can answer, so the first new accepted bubble is
+    // our answer however the game rewrote it: "donut" shown as
+    // "doughnut", "zorilla" shown as "striped polecat". (A rejection
+    // clears the pending submission, so it never carries over.)
     const pending = state.awaitingResult && Date.now() - state.awaitingAt < 8000 ? state.awaitingResult : null;
+    // Diagnostic: the bubble showing our live draft (class "caret")
+    // during our turn is our seat's bubble. Whether the game reuses
+    // that element for the accepted answer is logged as sameSeat, to
+    // learn whether seats can identify our answers directly.
+    if (isMyTurn(partyInput())) {
+      const draft = document.querySelector(".pf-say.on.caret");
+      if (draft) state.mySayEl = draft;
+    }
     document.querySelectorAll(".pf-say.on:not(.bad):not(.caret)").forEach((el) => {
       const t = norm(el.textContent);
       if (claimForPrevRound(el, t, true)) return;
-      if (t && !state.said.has(t) && pending && !state.ownPlayed.has(t) && !state.correctedPending &&
-          looksLikeCorrection(pending, el.textContent)) {
+      if (t && !state.said.has(t) && pending && !state.ownPlayed.has(t) && !state.correctedPending) {
         state.correctedPending = pending;
         noteOwnPlayed(el.textContent);
       }
@@ -1227,8 +1225,14 @@
       // it once, and learn it into the rare list when it is krillion.
       if (t && state.ownPlayed.has(t) && !state.ownTiers.has(t)) {
         state.ownTiers.add(t);
+        // Our exact answer showed: no rewritten form is coming.
+        if (pending) state.correctedPending = pending;
         const tier = bubbleTier(el);
-        elog("bubble_seen", { text: el.textContent, tier: tier || null, outcome: "accepted", own: true });
+        elog("bubble_seen", {
+          text: el.textContent, tier: tier || null, outcome: "accepted", own: true,
+          sent: pending && norm(pending) !== t ? pending : undefined,
+          sameSeat: state.mySayEl ? state.mySayEl === el : null,
+        });
         if (tier === "krillion") promoteKrillion(el.textContent, "own");
       }
     });
