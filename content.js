@@ -57,6 +57,8 @@
     lastPending: null,           // party: { text, at } of a submission still awaiting its result when the prompt vanished
     correctedPending: null,      // party: the pending submission whose shown bubble was already matched
     mySayEl: null,               // party: our seat's bubble element, seen holding our live draft (diagnostic)
+    lastMyTurnAt: 0,             // party: last tick at which it was our turn (tracked in every mode)
+    ownRejected: new Set(),      // party: norms of our submissions the game rejected this round
     promotedKrillions: new Set(), // party: norms already promoted this round
     copied: null,
     copiedTimer: null,
@@ -890,6 +892,7 @@
       prevRound,
       lastPending: null,
       correctedPending: null,
+      ownRejected: new Set(),
       copied: null,
     });
     fetchCandidates(prompt, []);
@@ -1094,6 +1097,19 @@
   // that just ended, not the new one. A snapshot of the ending round
   // lets them be credited there.
   const PREV_ROUND_GRACE_MS = 2500;
+  // Our submission still awaiting its result, or null. It only counts
+  // while the turn is ours or has just ended (its bubble lands as the
+  // turn passes), never once the game rejected it, and never when it
+  // is stale: some paths (Mode "suggest", an empty list) skip the code
+  // that clears awaitingResult, so its presence alone proves nothing.
+  const PENDING_AFTER_TURN_MS = 1000;
+  function pendingSubmission() {
+    const text = state.awaitingResult;
+    if (!text || Date.now() - state.awaitingAt > 8000) return null;
+    if (Date.now() - state.lastMyTurnAt > PENDING_AFTER_TURN_MS) return null;
+    if (state.ownRejected.has(norm(text))) return null;
+    return text;
+  }
   // Nobody answers a new question this fast (the extension's own
   // fastest first answer in the logs took over 1 s), so any bubble in
   // this window is the previous round's last answer, whoever played it.
@@ -1105,7 +1121,7 @@
       const t = norm(el.textContent);
       if (t) stale.set(el, t);
     });
-    const recent = state.lastPending && Date.now() - state.lastPending.at < 8000 ? state.lastPending.text : null;
+    const recent = state.lastPending && Date.now() - state.lastPending.at < 3000 ? state.lastPending.text : null;
     return {
       prompt: state.prompt,
       wordStyle: settings.wordStyle,
@@ -1113,7 +1129,7 @@
       said: state.said,
       ownPlayed: state.ownPlayed,
       ownTiers: state.ownTiers,
-      pending: state.awaitingResult || recent,
+      pending: pendingSubmission() || recent,
       reported: state.reportedOutcomes,
       promoted: state.promotedKrillions,
       startedAt: Date.now(),
@@ -1140,13 +1156,17 @@
     const inGrace = age <= PREV_ROUND_GRACE_MS;
     const tooSoon = age <= PREV_ROUND_SURE_MS;
     if (!staleEl && !inGrace) return false;
+    // own: any answer we played that round (an earlier one may still be
+    // on screen). Only the bubble for the PENDING submission, exact or
+    // rewritten, is evidence that submission was accepted.
     let own = prev.ownPlayed.has(t);
-    if (own && prev.pending) prev.pendingMatched = true;
+    let answersPending = !!prev.pending && accepted && t === norm(prev.pending);
     if (!own && accepted && inGrace && prev.pending && !prev.pendingMatched && !prev.said.has(t)) {
       own = true; // the pending answer, as the game spelled it
+      answersPending = true;
       prev.ownPlayed.add(t);
-      prev.pendingMatched = true;
     }
+    if (answersPending) prev.pendingMatched = true;
     if (!staleEl && !own && !tooSoon) return false;
     prev.claimed.set(el, t);
     if (!accepted) return true;
@@ -1156,14 +1176,14 @@
         const tier = bubbleTier(el);
         elog("bubble_seen", {
           prompt: prev.prompt, text: el.textContent, tier: tier || null, outcome: "accepted", own: true, lateBubble: true,
-          sent: prev.pending && norm(prev.pending) !== t ? prev.pending : undefined,
+          sent: answersPending && prev.pending && norm(prev.pending) !== t ? prev.pending : undefined,
           sameSeat: state.mySayEl ? state.mySayEl === el : null,
         });
         if (tier === "krillion") promoteKrillion(el.textContent, "own", prev);
       }
       // The bubble is the acceptance of the submission that ended
       // the round; the turn-pass path never ran for it.
-      if (prev.pending) {
+      if (answersPending && prev.pending) {
         reportOutcome(prev.pending, "accepted", "own", prev);
         prev.pending = null;
       }
@@ -1189,7 +1209,22 @@
     // our answer however the game rewrote it: "donut" shown as
     // "doughnut", "zorilla" shown as "striped polecat". (A rejection
     // clears the pending submission, so it never carries over.)
-    const pending = state.awaitingResult && Date.now() - state.awaitingAt < 8000 ? state.awaitingResult : null;
+    // Track our turn here, in every mode: partyAutoTick returns early
+    // in Mode "suggest" and never sees the turn pass.
+    if (isMyTurn(partyInput())) state.lastMyTurnAt = Date.now();
+    // A rejection banner is for our own submission: that word is not
+    // ours on screen (an opponent's bubble may show it), and the
+    // submission is no longer pending.
+    const rejNow = $(".ds-reject");
+    const rejWord = rejNow && rejNow.textContent.match(/[“"](.+?)[”"]/);
+    if (rejWord && !/signal lost/i.test(rejNow.textContent)) {
+      const rk = norm(rejWord[1]);
+      if (rk && !state.ownRejected.has(rk)) {
+        state.ownRejected.add(rk);
+        if (!state.ownTiers.has(rk)) state.ownPlayed.delete(rk);
+      }
+    }
+    const pending = pendingSubmission();
     // Diagnostic: the bubble showing our live draft (class "caret")
     // during our turn is our seat's bubble. Whether the game reuses
     // that element for the accepted answer is logged as sameSeat, to
@@ -1226,11 +1261,11 @@
       if (t && state.ownPlayed.has(t) && !state.ownTiers.has(t)) {
         state.ownTiers.add(t);
         // Our exact answer showed: no rewritten form is coming.
-        if (pending) state.correctedPending = pending;
+        if (pending && t === norm(pending)) state.correctedPending = pending;
         const tier = bubbleTier(el);
         elog("bubble_seen", {
           text: el.textContent, tier: tier || null, outcome: "accepted", own: true,
-          sent: pending && norm(pending) !== t ? pending : undefined,
+          sent: pending && state.correctedPending === pending && norm(pending) !== t ? pending : undefined,
           sameSeat: state.mySayEl ? state.mySayEl === el : null,
         });
         if (tier === "krillion") promoteKrillion(el.textContent, "own");
@@ -1555,7 +1590,8 @@
         const captured = state.wasMyTurn && captureLeftover(true);
         cancelTyping();
         state.wasMyTurn = false;
-        if (state.awaitingResult) state.lastPending = { text: state.awaitingResult, at: Date.now() };
+        const pend = pendingSubmission();
+        if (pend) state.lastPending = { text: pend, at: Date.now() };
         state.awaitingResult = null;
         state.enterDiag = null;
         state.roundKey = null;

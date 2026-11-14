@@ -118,7 +118,8 @@ different form of your answer ("donut" as "doughnut", "zorilla" as
 "striped polecat"). Party play is turn-based, so between your
 submission and the turn passing nobody else can answer: the first
 new accepted bubble in that window is yours, whatever it says. A
-rejection ends that window. Your own `bubble_seen` events carry
+rejection ends that window, and so does the turn passing (after a
+1-second allowance for the bubble to land), in every mode. Your own `bubble_seen` events carry
 `sent` (what you typed, when it differs) and `sameSeat` (whether
 the bubble is the element that showed your live draft), a
 diagnostic for identifying your seat directly.

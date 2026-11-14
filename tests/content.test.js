@@ -1129,6 +1129,73 @@ test("bubbles left over when the question changes are credited to the question t
   assert.ok(!reports.some((c) => c.prompt === "Name a third dish"), "nothing is reported against the third question");
 });
 
+test("an earlier answer of ours still on screen does not stand in for the pending one", async (t) => {
+  const g = setup({
+    responder: (msg) =>
+      msg.type !== "getAnswers" ? { ok: true }
+        : msg.prompt.includes("second") ? { ok: true, rare: ["xy", "zw"], common: ["qq", "rr"] }
+        : { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] },
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.includes("ab"), 5000, "first submit");
+  addPartyBubble(g, { text: "ab" }); // our first answer; seats keep showing it
+  await sleep(400);
+  g.setMyTurn(false);
+  await sleep(400);
+  addPartyBubble(g, { text: "Zork" });
+  await sleep(400);
+  g.setMyTurn(true);
+  await waitFor(() => g.submittedTexts.includes("cd"), 5000, "second submit");
+  // "cd" ends the category; its bubble lands 1.5 s later, rewritten.
+  g.setPrompt("Name a second dish", "CATEGORY 4");
+  await sleep(1500);
+  addPartyBubble(g, { text: "Cod Stew", tier: "krillion" });
+  await sleep(700);
+  const promotes = g.calls.filter((c) => c.type === "promoteKrillion").map((c) => [c.text, c.source, c.prompt]);
+  assert.deepEqual(promotes, [["Cod Stew", "own", "Name a noodle dish"]]);
+  const reports = g.calls.filter((c) => c.type === "reportOutcome");
+  assert.ok(reports.some((c) => c.text === "cd" && c.source === "own" && c.outcome === "accepted" && c.prompt === "Name a noodle dish"));
+  assert.ok(!reports.some((c) => c.prompt === "Name a second dish"), "nothing is reported against the new question");
+  assert.ok(!reports.some((c) => c.text === "Cod Stew" && c.source === "other"));
+});
+
+test("suggest mode: a rejected submission never claims a later opponent bubble", async (t) => {
+  const g = setup({ mode: "suggest",
+    responder: (msg) => (msg.type === "getAnswers" ? { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] } : { ok: true }),
+  });
+  t.after(() => g.teardown());
+  await sleep(800);
+  g.input._v = "zz"; g.input.value = "zz";
+  g.input.dispatchEvent(new KeyEv("keydown", { key: "Enter", bubbles: true }));
+  const rej = g.doc.createElement("div"); rej.classList.add("ds-reject"); rej.textContent = "“zz”: no echo. keep going"; g.root.appendChild(rej);
+  await sleep(700);
+  rej.remove(); g.setMyTurn(false);
+  await sleep(1500);
+  addPartyBubble(g, { text: "Zork", tier: "krillion" });
+  await sleep(700);
+  const promotes = g.calls.filter((c) => c.type === "promoteKrillion").map((c) => [c.text, c.source]);
+  assert.deepEqual(promotes, [["Zork", "other"]]);
+  assert.ok(g.calls.some((c) => c.type === "reportOutcome" && c.text === "Zork" && c.source === "other" && c.outcome === "accepted"));
+});
+
+test("suggest mode: an unrejected submission does not linger once the turn has passed", async (t) => {
+  const g = setup({ mode: "suggest",
+    responder: (msg) => (msg.type === "getAnswers" ? { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] } : { ok: true }),
+  });
+  t.after(() => g.teardown());
+  await sleep(800);
+  g.input._v = "zz"; g.input.value = "zz";
+  g.input.dispatchEvent(new KeyEv("keydown", { key: "Enter", bubbles: true }));
+  addPartyBubble(g, { text: "zz" }); // our answer, accepted
+  await sleep(500);
+  g.setMyTurn(false);
+  await sleep(1500);
+  addPartyBubble(g, { text: "Zork", tier: "krillion" });
+  await sleep(700);
+  const promotes = g.calls.filter((c) => c.type === "promoteKrillion").map((c) => [c.text, c.source]);
+  assert.deepEqual(promotes, [["Zork", "other"]]);
+});
+
 test("game events are logged and relayed to the server log", async (t) => {
   const g = setup({
     responder: (msg) =>
