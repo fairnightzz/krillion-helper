@@ -328,7 +328,7 @@ test("overview summarizes questions, outcomes, cache use, and krillion finds", a
   assert.deepEqual(t2.answers, { rare: 2, common: 4, solo: 0 });
   assert.equal(t2.hidden, 1);
   assert.deepEqual(t2.feedback, { accepted: 1, duplicate: 1, rejected: 1 });
-  assert.deepEqual(t2.cache, { hit: 1, miss: 1, store: 2 });
+  assert.deepEqual(t2.cache, { hit: 1, miss: 1 });
   assert.equal(t2.krillion, 1);
   assert.deepEqual(t2.models, { "claude-haiku-4-5": 1 });
 
@@ -413,5 +413,52 @@ test("encounters backfill from the event log on first open", (t) => {
   const row = db.prepare("SELECT count, last_seen FROM encounters WHERE prompt_key = 'name a fruit'").get();
   assert.equal(row.count, 2);
   assert.equal(row.last_seen, "2026-11-13T01:00:00.000Z");
+  db.close();
+});
+
+test("lookup and krillion stats survive event-log pruning and backfill from events", async (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { createServer, openDb } = require("./server.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kch-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "kch.sqlite");
+  const server = createServer({ dbPath: file, token: TOKEN });
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  await req(base, "/api/answers?prompt=Name%20a%20fruit&wordStyle=rare&party=true");
+  await req(base, "/api/answers", { method: "POST", body: JSON.stringify({ prompt: "Name a fruit", wordStyle: "rare", party: true, rare: ["Kiwano"] }) });
+  await req(base, "/api/answers?prompt=Name%20a%20fruit&wordStyle=rare&party=true");
+  await req(base, "/api/promote", { method: "POST", body: JSON.stringify({ prompt: "Name a fruit", text: "Rambutan", tier: "krillion", source: "own" }) });
+  await new Promise((resolve) => server.close(resolve));
+
+  // The event log loses everything; the stats tables keep it.
+  let db = openDb(file);
+  db.exec("DELETE FROM events");
+  db.close();
+  const s2 = createServer({ dbPath: file, token: TOKEN });
+  await new Promise((resolve) => s2.listen(0, resolve));
+  const base2 = `http://127.0.0.1:${s2.address().port}`;
+  const o = (await req(base2, "/api/overview")).body;
+  await new Promise((resolve) => s2.close(resolve));
+  assert.deepEqual(o.totals.cache, { hit: 1, miss: 1 });
+  assert.equal(o.totals.krillion, 1);
+  assert.equal(o.totals.krillionOwn, 1);
+  assert.equal(o.krillionFinds[0].text, "Rambutan");
+  assert.equal(o.daily.length, 1);
+  assert.equal(o.prompts[0].hits, 1);
+
+  // A database from before these tables fills them from its events once.
+  db = openDb(file);
+  db.exec("DROP TABLE lookup_counts; DROP TABLE krillion_finds;");
+  const ins = db.prepare("INSERT INTO events (created_at, kind, prompt_text, text, detail) VALUES (?, ?, ?, ?, ?)");
+  ins.run("2026-11-13T01:00:00.000Z", "cache_miss", "Name a fruit", null, JSON.stringify({ wordStyle: "rare", party: true }));
+  ins.run("2026-11-13T01:00:05.000Z", "promote", "Name a fruit", "Durian", JSON.stringify({ stored: true, source: "other" }));
+  ins.run("2026-11-13T01:00:06.000Z", "promote", "Name a fruit", "Gone", JSON.stringify({ stored: false, removed: true }));
+  db.close();
+  db = openDb(file);
+  assert.equal(db.prepare("SELECT SUM(misses) AS n FROM lookup_counts").get().n, 1);
+  assert.deepEqual(db.prepare("SELECT text, source, repeat FROM krillion_finds").all().map((r) => ({ ...r })), [{ text: "Durian", source: "other", repeat: 0 }]);
   db.close();
 });

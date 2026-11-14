@@ -49,8 +49,11 @@ you click Sign out. The page shows:
 
 The page holds no data itself: it reads everything through
 `GET /api/overview` and `GET /api/stats`, which need the token.
-Hit, miss, krillion, and daily numbers (not Seen) come from the event log, so
-they cover its newest 100,000 events.
+Cache hits and misses, the daily chart, krillion finds, and Seen
+counts live in their own tables (`lookup_counts`, `krillion_finds`,
+`encounters`), so they keep their full history even though the
+event log only keeps its newest 100,000 events. A database from
+before those tables fills them once from the event log on startup.
 
 ## Extension settings
 

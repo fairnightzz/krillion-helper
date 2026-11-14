@@ -134,6 +134,32 @@ function openDb(dbPath) {
     );
   `);
   if (!hadEncounters) backfillEncounters(db);
+  // Dashboard stats kept outside the pruned event log, so they never
+  // shrink: cache lookups per day and variant, and krillion sightings.
+  const hadStats = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lookup_counts'",
+  ).get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lookup_counts (
+      day TEXT NOT NULL,
+      prompt_key TEXT NOT NULL,
+      word_style TEXT NOT NULL,
+      party INTEGER NOT NULL,
+      hits INTEGER NOT NULL DEFAULT 0,
+      misses INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, prompt_key, word_style, party)
+    );
+    CREATE TABLE IF NOT EXISTS krillion_finds (
+      id INTEGER PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      prompt_key TEXT NOT NULL,
+      prompt_text TEXT NOT NULL,
+      text TEXT NOT NULL,
+      source TEXT NOT NULL,
+      repeat INTEGER NOT NULL
+    );
+  `);
+  if (!hadStats) backfillStats(db, db);
   return db;
 }
 
@@ -168,6 +194,51 @@ function backfillEncounters(db) {
   db.exec("BEGIN");
   try {
     for (const r of rows) noteEncounter(db, r.prompt_text, r.created_at);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+  }
+}
+
+function countLookup(db, prompt, wordStyle, party, hit, atIso) {
+  const key = promptKey(prompt);
+  if (!key) return;
+  try {
+    db.prepare(
+      `INSERT INTO lookup_counts (day, prompt_key, word_style, party, hits, misses) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(day, prompt_key, word_style, party) DO UPDATE SET hits = hits + excluded.hits, misses = misses + excluded.misses`,
+    ).run((atIso || nowIso()).slice(0, 10), key, wordStyle, party ? 1 : 0, hit ? 1 : 0, hit ? 0 : 1);
+  } catch (_) {}
+}
+
+// A krillion sighting, unless a manual delete refused it.
+function recordKrillionFind(db, prompt, text, result, source, atIso) {
+  if (!result || result.removed) return;
+  try {
+    db.prepare(
+      "INSERT INTO krillion_finds (created_at, prompt_key, prompt_text, text, source, repeat) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(atIso || nowIso(), promptKey(prompt), String(prompt).trim(), text, source === "own" ? "own" : "other", result.stored ? 0 : 1);
+  } catch (_) {}
+}
+
+// Replays cache lookups and promotions from an events table into the
+// stats tables. src may be another database (an old backup), for
+// events the live log has already pruned; pass before to take only
+// events older than that timestamp.
+function backfillStats(db, src, before) {
+  const rows = src.prepare(
+    "SELECT created_at, kind, prompt_text, text, detail FROM events WHERE kind IN ('cache_hit', 'cache_miss', 'promote')" +
+    (before ? " AND created_at < ?" : "") + " ORDER BY id ASC",
+  ).all(...(before ? [before] : []));
+  db.exec("BEGIN");
+  try {
+    for (const r of rows) {
+      let d = null;
+      try { d = r.detail ? JSON.parse(r.detail) : null; } catch (_) {}
+      if (!d || !r.prompt_text) continue;
+      if (r.kind === "promote") recordKrillionFind(db, r.prompt_text, r.text, d, d.source, r.created_at);
+      else countLookup(db, r.prompt_text, d.wordStyle, d.party, r.kind === "cache_hit", r.created_at);
+    }
     db.exec("COMMIT");
   } catch (e) {
     db.exec("ROLLBACK");
@@ -426,44 +497,31 @@ function buildOverview(db) {
     if (row[e.list_kind] !== undefined) row[e.list_kind]++;
   }
 
-  // Event-derived stats. Promotions always land in the rare/party
-  // variant; cache events carry their variant in detail.
+  // Lookups and krillion sightings come from their own tables, which
+  // the event log's pruning never touches. Promotions always land in
+  // the rare/party variant.
   const byVariant = new Map();
   for (const row of rows.values()) byVariant.set(`${row.key}|${row.wordStyle}|${row.party ? 1 : 0}`, row);
-  const cache = { hit: 0, miss: 0, store: 0 };
-  const krillionFinds = [];
-  const evRows = db.prepare(
-    "SELECT created_at, kind, prompt_text, text, detail FROM events WHERE kind IN ('cache_hit','cache_miss','cache_store','promote') ORDER BY id DESC",
-  ).all();
-  for (const ev of evRows) {
-    let detail = null;
-    try { detail = ev.detail ? JSON.parse(ev.detail) : null; } catch (_) {}
-    const key = promptKey(ev.prompt_text);
-    if (ev.kind === "promote") {
-      // Every krillion-tier sighting counts, including repeats of a
-      // word already in the rare list (stored: false, already: true);
-      // only a promotion refused by a manual delete is left out.
-      if (!detail || detail.removed) continue;
-      krillionFinds.push({
-        prompt: ev.prompt_text, text: ev.text, at: ev.created_at,
-        source: detail.source === "own" ? "own" : "other", repeat: !detail.stored,
-      });
-      const row = byVariant.get(`${key}|rare|1`);
-      if (row && !row.krillion.includes(ev.text)) row.krillion.push(ev.text);
-      continue;
-    }
-    const k = ev.kind.slice("cache_".length);
-    cache[k]++;
-    if (k === "store" || !detail) continue;
-    const row = byVariant.get(`${key}|${detail.wordStyle}|${detail.party ? 1 : 0}`);
-    if (row) row[k === "hit" ? "hits" : "misses"]++;
+  const cache = { hit: 0, miss: 0 };
+  for (const r of db.prepare(
+    "SELECT prompt_key, word_style, party, SUM(hits) AS hits, SUM(misses) AS misses FROM lookup_counts GROUP BY prompt_key, word_style, party",
+  ).all()) {
+    cache.hit += r.hits;
+    cache.miss += r.misses;
+    const row = byVariant.get(`${r.prompt_key}|${r.word_style}|${r.party}`);
+    if (row) { row.hits += r.hits; row.misses += r.misses; }
   }
+  const krillionFinds = db.prepare(
+    "SELECT created_at, prompt_key, prompt_text, text, source, repeat FROM krillion_finds ORDER BY created_at DESC, id DESC",
+  ).all().map((f) => {
+    const row = byVariant.get(`${f.prompt_key}|rare|1`);
+    if (row && !row.krillion.includes(f.text)) row.krillion.push(f.text);
+    return { prompt: f.prompt_text, key: f.prompt_key, text: f.text, at: f.created_at, source: f.source, repeat: f.repeat === 1 };
+  });
 
   const daily = db.prepare(
-    `SELECT substr(created_at, 1, 10) AS day,
-       SUM(kind = 'cache_hit') AS hits, SUM(kind = 'cache_miss') AS misses,
-       SUM(kind = 'feedback') AS outcomes, SUM(kind = 'submit_attempt') AS submits
-     FROM events GROUP BY day ORDER BY day DESC LIMIT 14`,
+    `SELECT day, SUM(hits) AS hits, SUM(misses) AS misses FROM lookup_counts
+     GROUP BY day ORDER BY day DESC LIMIT 14`,
   ).all().reverse();
   const eventsInfo = db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS since FROM events").get();
   const encounters = {};
@@ -489,9 +547,9 @@ function buildOverview(db) {
       feedback: { accepted: sum("accepted"), duplicate: sum("duplicate"), rejected: sum("rejected") },
       cache,
       // Distinct answers (question + word), not sightings.
-      krillion: new Set(krillionFinds.map((f) => promptKey(f.prompt) + "|" + textKey(f.text))).size,
+      krillion: new Set(krillionFinds.map((f) => f.key + "|" + textKey(f.text))).size,
       krillionOwn: new Set(krillionFinds.filter((f) => f.source === "own")
-        .map((f) => promptKey(f.prompt) + "|" + textKey(f.text))).size,
+        .map((f) => f.key + "|" + textKey(f.text))).size,
       krillionSightings: krillionFinds.length,
       encounters: encounterTotals.total,
       repeatedQuestions: encounterTotals.repeated,
@@ -550,12 +608,14 @@ async function handleRequest(db, token, req, res) {
       }
       noteEncounter(db, prompt);
       const row = findPrompt(db, prompt, wordStyle, party);
+      const lists = row ? visibleLists(db, row.id) : null;
+      const served = lists ? (party ? [...lists.rare, ...lists.common] : lists.solo) : [];
+      countLookup(db, prompt, wordStyle, party, served.length > 0);
       if (!row) {
         recordEvent(db, "cache_miss", { prompt_text: String(prompt).trim(), detail: { wordStyle, party, reason: "no_entry" } });
         return sendJson(res, 404, { cached: false, error: "no cached answers" });
       }
-      const lists = visibleLists(db, row.id);
-      const candidates = party ? [...lists.rare, ...lists.common] : lists.solo;
+      const candidates = served;
       if (!candidates.length) {
         recordEvent(db, "cache_miss", { prompt_text: row.prompt_text, detail: { wordStyle, party, reason: "exhausted" } });
         return sendJson(res, 404, { cached: false, error: "no cached answers" });
@@ -630,6 +690,7 @@ async function handleRequest(db, token, req, res) {
       }
       const row = upsertPrompt(db, body.prompt, "rare", true, undefined, undefined);
       const result = promoteKrillion(db, row, body.text.trim());
+      recordKrillionFind(db, row.prompt_text, body.text.trim(), result, body.source);
       // Who played it: "own" (this player) or "other" (an opponent).
       const source = body.source === "own" ? "own" : "other";
       recordEvent(db, "promote", {
@@ -813,4 +874,4 @@ function startFromEnv() {
 
 if (require.main === module) startFromEnv();
 
-module.exports = { createServer, openDb, promptKey, textKey, isAutoHidden, visibleLists, noteEncounter, ENCOUNTER_GAP_MS };
+module.exports = { createServer, openDb, promptKey, textKey, isAutoHidden, visibleLists, noteEncounter, ENCOUNTER_GAP_MS, backfillStats };
