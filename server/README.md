@@ -111,6 +111,9 @@ case. An accepted answer whose own speech bubble carries
 `--cc: var(--tier-krillion, …)` was a one-in-a-krillion answer, so
 the extension promotes it into the rare list, nestled at index 4
 (5th place; shorter lists append at the end, still in the top 5).
+A word already in the rare list but below the top 5 (it was there
+before it was found, or newer finds pushed it down) moves up to
+index 4 when it is found again; one already in the top 5 stays put.
 This covers opponents' answers and your own (your own bubble is
 recognised from what you submitted that round, whether the
 extension typed it or you did). The game sometimes shows a

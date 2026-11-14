@@ -179,6 +179,17 @@ test("promote inserts only a krillion answer at rare index 4, dedups, and never 
   const again = await promote("KRILLIONWORD", "krillion");
   assert.equal(again.body.stored, false);
   assert.equal(again.body.already, true);
+  assert.equal(again.body.moved, undefined, "already in the top 5: not moved");
+  // A krillion word already in the rare list below the top 5 moves up to index 4.
+  const deep = await promote("Rare11", "krillion");
+  assert.equal(deep.body.already, true);
+  assert.equal(deep.body.moved, true);
+  hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
+  assert.equal(hit.body.rare[4], "Rare11");
+  assert.equal(hit.body.rare[5], "KrillionWord");
+  assert.equal(hit.body.rare.length, 13);
+  // Put the order back for the checks below.
+  await promote("KrillionWord", "krillion");
   hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
   assert.equal(hit.body.rare.filter((w) => w === "KrillionWord").length, 1);
   // A short rare list appends at the end: still within the top 5.

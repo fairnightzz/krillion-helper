@@ -427,6 +427,22 @@ function promoteKrillion(db, promptRow, text) {
   ).all(promptRow.id, key);
   if (existing.some((e) => e.removed === 1)) return { stored: false, removed: true };
   const listed = existing.find((e) => e.list_kind !== "common");
+  if (listed && listed.list_kind === "rare") {
+    // Already in the rare list: make sure it is in the top 5. A word
+    // found below that (it was in the list already, or newer finds
+    // pushed it down) moves up to index 4, like a new promotion.
+    const order = db.prepare(
+      "SELECT id FROM entries WHERE prompt_id = ? AND list_kind = 'rare' AND removed = 0 ORDER BY position, id",
+    ).all(promptRow.id).map((e) => e.id);
+    const rank = order.indexOf(listed.id);
+    if (rank <= 4) return { stored: false, already: true, position: rank };
+    order.splice(rank, 1);
+    order.splice(4, 0, listed.id);
+    const setPos = db.prepare("UPDATE entries SET position = ? WHERE id = ?");
+    order.forEach((id, i) => setPos.run(i, id));
+    db.prepare("UPDATE prompts SET updated_at = ? WHERE id = ?").run(now, promptRow.id);
+    return { stored: false, already: true, moved: true, position: 4 };
+  }
   if (listed) return { stored: false, already: true, position: listed.position };
   const countRow = db.prepare(
     "SELECT COUNT(*) AS n FROM entries WHERE prompt_id = ? AND list_kind = 'rare' AND removed = 0",
@@ -874,4 +890,4 @@ function startFromEnv() {
 
 if (require.main === module) startFromEnv();
 
-module.exports = { createServer, openDb, promptKey, textKey, isAutoHidden, visibleLists, noteEncounter, ENCOUNTER_GAP_MS, backfillStats };
+module.exports = { createServer, openDb, promptKey, textKey, isAutoHidden, visibleLists, noteEncounter, ENCOUNTER_GAP_MS, backfillStats, promoteKrillion };
