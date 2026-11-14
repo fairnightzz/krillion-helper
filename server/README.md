@@ -100,10 +100,19 @@ conflicting evidence never removes an answer on its own. Manual
 deletion always wins and survives regeneration.
 
 Opponent answers are otherwise never learned — except one narrow
-case. An opponent answer whose own speech bubble carries
+case. An accepted answer whose own speech bubble carries
 `--cc: var(--tier-krillion, …)` was a one-in-a-krillion answer, so
 the extension promotes it into the rare list, nestled at index 4
 (5th place; shorter lists append at the end, still in the top 5).
+This covers opponents' answers and your own (your own bubble is
+recognised from what you submitted that round, whether the
+extension typed it or you did). The promotion records who played
+it (`source`: `own` or `other`), and the dashboard tags your finds.
+Promotion copies rather than moves: a word already on that
+prompt's common bench keeps its common entry, but is served only
+once, from the rare list. Promotions always land in the "Rare
+first" (`wordStyle=rare`) party lists, so "Common only" play never
+sees them.
 No other tier is promoted, and seat yellowness never counts: it is
 the spare-life flash, not a tier signal.
 
@@ -125,7 +134,7 @@ Game-event kinds relayed by the extension: `fetch_result`
 (detail `cached`, counts, and `model`), `fetch_error`,
 `typing_start`, `typing_done`, `typing_aborted`,
 `submit_attempt`, `submit_blocked`, `solo_submit`, `bubble_seen`
-(detail `tier` and `outcome`), `outcome_reported`, `promote_sent`,
+(detail `tier` and `outcome`, plus `own: true` for your own answers), `outcome_reported`, `promote_sent`,
 `leftover_cleared`.
 
 ```sh
@@ -156,9 +165,9 @@ curl -X POST localhost:8787/api/answers -H "X-KCH-Token: $KCH_TOKEN" -H 'Content
 curl -X POST localhost:8787/api/feedback -H "X-KCH-Token: $KCH_TOKEN" -H 'Content-Type: application/json' \
   -d '{"prompt":"Name a noodle dish","wordStyle":"rare","party":true,"text":"Udon","outcome":"rejected","source":"banner"}'
 
-# Promote an opponent's krillion-tier answer into the rare list at index 4 (other tiers: 400)
+# Promote a krillion-tier answer into the rare list at index 4 (other tiers: 400); source is own|other
 curl -X POST localhost:8787/api/promote -H "X-KCH-Token: $KCH_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"prompt":"Name a noodle dish","text":"Udon","tier":"krillion"}'
+  -d '{"prompt":"Name a noodle dish","text":"Udon","tier":"krillion","source":"other"}'
 
 # Whole-cache summary (what the dashboard reads)
 curl "localhost:8787/api/overview" -H "X-KCH-Token: $KCH_TOKEN"

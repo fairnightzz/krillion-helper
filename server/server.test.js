@@ -195,13 +195,17 @@ test("promote inserts only a krillion answer at rare index 4, dedups, and never 
   assert.equal(short.body.position, 2);
   const shortHit = await req(base, `/api/answers?prompt=${sq}&wordStyle=rare&party=true`);
   assert.deepEqual(shortHit.body.rare, ["One", "Two", "ShortKrillion"]);
-  // A word already in the common bench moves to rare index 4.
+  // A word already on the common bench is copied to rare index 4:
+  // served once (from rare), and its common entry is kept.
   const moved = await promote("Pho", "krillion");
   assert.equal(moved.body.stored, true);
   assert.equal(moved.body.position, 4);
   hit = await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true`);
   assert.equal(hit.body.rare[4], "Pho");
   assert.deepEqual(hit.body.common, ["Pad thai"]);
+  assert.equal(hit.body.candidates.filter((w) => w === "Pho").length, 1);
+  const stats = await req(base, `/api/stats?prompt=${q}&wordStyle=rare&party=true`);
+  assert.deepEqual(stats.body.answers.filter((a) => a.text === "Pho").map((a) => a.listKind).sort(), ["common", "rare"]);
   // A manually removed word is never resurrected by promotion.
   await req(base, `/api/answers?prompt=${q}&wordStyle=rare&party=true&text=${encodeURIComponent("Pad thai")}`, { method: "DELETE" });
   const removed = await promote("Pad thai", "krillion");
@@ -312,7 +316,7 @@ test("overview summarizes questions, outcomes, cache use, and krillion finds", a
     }) });
   }
   await req(base, "/api/promote", { method: "POST", body: JSON.stringify({
-    prompt: "Name a noodle dish", text: "Khao soi", tier: "krillion",
+    prompt: "Name a noodle dish", text: "Khao soi", tier: "krillion", source: "own",
   }) });
 
   const { status, body } = await req(base, "/api/overview");
@@ -333,6 +337,8 @@ test("overview summarizes questions, outcomes, cache use, and krillion finds", a
   assert.equal(rare.misses, 1);
   assert.deepEqual(rare.krillion, ["Khao soi"]);
   assert.equal(body.krillionFinds[0].text, "Khao soi");
+  assert.equal(body.krillionFinds[0].source, "own");
+  assert.equal(t2.krillionOwn, 1);
   assert.equal(body.daily.length, 1);
   assert.equal(body.daily[0].hits, 1);
 

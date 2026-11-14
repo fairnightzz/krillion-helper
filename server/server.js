@@ -208,6 +208,9 @@ function visibleLists(db, promptId) {
     if (isAutoHidden(aggs.get(textKey(row.text)))) continue;
     if (lists[row.list_kind]) lists[row.list_kind].push(row.text);
   }
+  // A promoted krillion answer can sit in both lists: serve it once.
+  const rareKeys = new Set(lists.rare.map(textKey));
+  lists.common = lists.common.filter((t) => !rareKeys.has(textKey(t)));
   return lists;
 }
 
@@ -342,16 +345,18 @@ function storeLists(db, promptRow, lists) {
 // removed answer is never resurrected. The prompt row is always
 // the rare party row: krillion answers are rare-list knowledge,
 // whatever word style the player currently uses.
+// Copy, never move: a word already on the common bench keeps its
+// common entry (visibleLists serves it once, from rare), so deleting
+// the rare copy later still leaves the common answer in place.
 function promoteKrillion(db, promptRow, text) {
   const key = textKey(text);
   const now = nowIso();
   const existing = db.prepare(
     "SELECT * FROM entries WHERE prompt_id = ? AND text_key = ?",
-  ).get(promptRow.id, key);
-  if (existing && existing.removed === 1) return { stored: false, removed: true };
-  if (existing && existing.list_kind !== "common") {
-    return { stored: false, already: true, position: existing.position };
-  }
+  ).all(promptRow.id, key);
+  if (existing.some((e) => e.removed === 1)) return { stored: false, removed: true };
+  const listed = existing.find((e) => e.list_kind !== "common");
+  if (listed) return { stored: false, already: true, position: listed.position };
   const countRow = db.prepare(
     "SELECT COUNT(*) AS n FROM entries WHERE prompt_id = ? AND list_kind = 'rare' AND removed = 0",
   ).get(promptRow.id);
@@ -359,7 +364,6 @@ function promoteKrillion(db, promptRow, text) {
   db.prepare(
     "UPDATE entries SET position = position + 1 WHERE prompt_id = ? AND list_kind = 'rare' AND removed = 0 AND position >= ?",
   ).run(promptRow.id, position);
-  if (existing) db.prepare("DELETE FROM entries WHERE id = ?").run(existing.id);
   db.prepare(
     "INSERT INTO entries (prompt_id, list_kind, position, text, text_key, created_at) VALUES (?, 'rare', ?, ?, ?, ?)",
   ).run(promptRow.id, position, text.trim(), key, now);
@@ -437,7 +441,7 @@ function buildOverview(db) {
     const key = promptKey(ev.prompt_text);
     if (ev.kind === "promote") {
       if (!detail || !detail.stored) continue;
-      krillionFinds.push({ prompt: ev.prompt_text, text: ev.text, at: ev.created_at });
+      krillionFinds.push({ prompt: ev.prompt_text, text: ev.text, at: ev.created_at, source: detail.source === "own" ? "own" : "other" });
       const row = byVariant.get(`${key}|rare|1`);
       if (row && !row.krillion.includes(ev.text)) row.krillion.push(ev.text);
       continue;
@@ -479,6 +483,7 @@ function buildOverview(db) {
       feedback: { accepted: sum("accepted"), duplicate: sum("duplicate"), rejected: sum("rejected") },
       cache,
       krillion: krillionFinds.length,
+      krillionOwn: krillionFinds.filter((f) => f.source === "own").length,
       encounters: encounterTotals.total,
       repeatedQuestions: encounterTotals.repeated,
       events: eventsInfo.n,
@@ -616,10 +621,12 @@ async function handleRequest(db, token, req, res) {
       }
       const row = upsertPrompt(db, body.prompt, "rare", true, undefined, undefined);
       const result = promoteKrillion(db, row, body.text.trim());
+      // Who played it: "own" (this player) or "other" (an opponent).
+      const source = body.source === "own" ? "own" : "other";
       recordEvent(db, "promote", {
         prompt_text: row.prompt_text,
         text: body.text.trim(),
-        detail: { ...result },
+        detail: { ...result, source },
       });
       return sendJson(res, 200, { ok: true, ...result });
     }

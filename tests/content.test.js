@@ -995,7 +995,7 @@ test("when only long answers remain, the shortest usable one is typed", async (t
   assert.equal(g.submittedTexts[0], "abcdefghijklmnopqrstu");
 });
 
-test("only opponent krillion-tier bubbles are promoted, once, from --cc", async (t) => {
+test("krillion-tier bubbles are promoted once, from --cc, tagged own or other", async (t) => {
   const g = setup({
     responder: (msg) =>
       msg.type === "getAnswers"
@@ -1005,7 +1005,8 @@ test("only opponent krillion-tier bubbles are promoted, once, from --cc", async 
   t.after(() => g.teardown());
   await waitFor(() => g.submits >= 1, 5000, "first submit");
   // "ab" was just submitted by this extension: its own krillion
-  // bubble must not promote. "quux" is a bad bubble, not an
+  // bubble promotes too, tagged "own", although the submit already
+  // marked it said. "quux" is a bad bubble, not an
   // acceptance, even with a krillion --cc on it. Seat or toast
   // signals are never consulted: only the bubble's own --cc.
   const addBubble = ({ text, cls, tier, attrOnly }) => {
@@ -1024,13 +1025,17 @@ test("only opponent krillion-tier bubbles are promoted, once, from --cc", async 
   addBubble({ text: "Quux", cls: "bad", tier: "krillion" });
   await sleep(1000);
   const promotes = g.calls.filter((c) => c.type === "promoteKrillion");
-  assert.deepEqual(promotes.map((c) => c.text).sort(), ["Vex", "Zork"]);
+  assert.deepEqual(promotes.map((c) => c.text).sort(), ["Vex", "Zork", "ab"]);
   assert.ok(promotes.every((c) => c.tier === "krillion" && c.prompt === "Name a noodle dish"));
+  assert.deepEqual(Object.fromEntries(promotes.map((c) => [c.text, c.source])), { Zork: "other", Vex: "other", ab: "own" });
+  // The own bubble's tier is logged once, flagged own.
+  const ownSeen = g.calls.filter((c) => c.type === "logEvent" && c.kind === "bubble_seen" && c.detail && c.detail.own);
+  assert.deepEqual(ownSeen.map((c) => [c.text, c.detail.tier]), [["ab", "krillion"]]);
   const accepted = g.calls.filter((c) => c.type === "reportOutcome" && c.outcome === "accepted");
   assert.deepEqual(accepted.map((c) => c.text).sort(), ["Sweden", "Vex", "Zork"]);
   // Bubbles persist across ticks: the same evidence promotes once.
   await sleep(700);
-  assert.equal(g.calls.filter((c) => c.type === "promoteKrillion").length, 2);
+  assert.equal(g.calls.filter((c) => c.type === "promoteKrillion").length, 3);
 });
 
 test("game events are logged and relayed to the server log", async (t) => {

@@ -565,8 +565,8 @@ async function logEvent(msg) {
   return true;
 }
 
-// Best-effort krillion promotion: learn an opponent's
-// one-in-a-krillion answer into the cache's rare list. The server
+// Best-effort krillion promotion: learn a one-in-a-krillion answer
+// (an opponent's, or this player's own) into the cache's rare list. The server
 // enforces the tier and the position; the worker only relays.
 async function promoteKrillion(msg) {
   const settings = await getSettings();
@@ -577,13 +577,16 @@ async function promoteKrillion(msg) {
   try {
     await serverRequest(settings, "/api/promote", {
       method: "POST",
-      body: JSON.stringify({ prompt: msg.prompt, text: msg.text, tier: "krillion" }),
+      body: JSON.stringify({
+        prompt: msg.prompt, text: msg.text, tier: "krillion",
+        source: msg.source === "own" ? "own" : "other",
+      }),
     });
   } catch (e) {
     elog("promote_error", { prompt: msg.prompt, text: msg.text, error: e.message || String(e) });
     throw e;
   }
-  elog("promote_sent", { prompt: msg.prompt, text: msg.text });
+  elog("promote_sent", { prompt: msg.prompt, text: msg.text, source: msg.source === "own" ? "own" : "other" });
   return true;
 }
 

@@ -51,6 +51,8 @@
     confirmed: new Set(), // party: answers positively confirmed in the set this round
     saidForms: new Map(), // party: norm -> readable form first seen, for refetch excludes
     reportedOutcomes: new Set(), // party: norm|outcome pairs already reported this round
+    ownPlayed: new Set(),        // party: norms this player submitted this round (auto or manual)
+    ownTiers: new Set(),         // party: own bubbles whose tier was already logged this round
     promotedKrillions: new Set(), // party: norms already promoted this round
     copied: null,
     copiedTimer: null,
@@ -517,6 +519,7 @@
     const btn = dock ? $(".ds-dive-btn", dock) : null;
     state.awaitingResult = input.value.trim();
     state.awaitingAt = Date.now();
+    noteOwnPlayed(candidate, state.awaitingResult);
     setStatus('submitting "' + candidate + '"');
     elog("submit_attempt", { text: candidate, via: btn && !btn.disabled ? "button" : "enter" });
     let dispatched = false;
@@ -651,6 +654,16 @@
       }, () => { void chrome.runtime.lastError; });
     } catch (_) {}
   }
+  // Every answer this player submits this round, by hand or by the
+  // extension. Submitting marks the word said at once, so the bubble
+  // scan below never treats its bubble as new: this set is how that
+  // bubble is still recognised as ours for its tier.
+  function noteOwnPlayed(...texts) {
+    for (const x of texts) {
+      const key = norm(x);
+      if (key) state.ownPlayed.add(key);
+    }
+  }
   function isOwnAnswer(text) {
     const key = norm(text);
     if (!key) return false;
@@ -702,22 +715,23 @@
   function isKrillionBubble(el) {
     return bubbleTier(el) === "krillion";
   }
-  // Learn an opponent's krillion-tier answer into the cache's
-  // rare list (server-side, nestled at index 4). One promotion
+  // Learn a krillion-tier answer (an opponent's or our own) into the
+  // cache's rare list (server-side, nestled at index 4). One promotion
   // per word per round: bubbles persist across ticks. The
   // acceptance itself is still reported by the caller, so the
   // cache also records it as accepted for curation.
-  function promoteKrillion(text) {
+  function promoteKrillion(text, source) {
     if (!text || !state.prompt) return;
     const key = norm(text);
     if (state.promotedKrillions.has(key)) return;
     state.promotedKrillions.add(key);
-    elog("promote_sent", { text });
+    elog("promote_sent", { text, source: source || "other" });
     chrome.runtime.sendMessage({
       type: "promoteKrillion",
       prompt: state.prompt,
       text,
       tier: "krillion",
+      source: source || "other",
     }, () => { void chrome.runtime.lastError; });
   }
   function parseRejectOutcome(rejText) {
@@ -859,6 +873,8 @@
       saidForms: new Map(),
       reportedOutcomes: new Set(),
       promotedKrillions: new Set(),
+      ownPlayed: new Set(),
+      ownTiers: new Set(),
       copied: null,
     });
     fetchCandidates(prompt, []);
@@ -1068,7 +1084,8 @@
     document.querySelectorAll(".pf-say.on:not(.bad):not(.caret)").forEach((el) => {
       const t = norm(el.textContent);
       if (t && !state.said.has(t)) {
-        elog("bubble_seen", { text: el.textContent, tier: bubbleTier(el) || null, outcome: "accepted" });
+        // Own bubbles are logged once, with own: true, just below.
+        if (!state.ownPlayed.has(t)) elog("bubble_seen", { text: el.textContent, tier: bubbleTier(el) || null, outcome: "accepted" });
         markSaid(el.textContent, el.textContent);
         state.confirmed.add(t);
         changed = true;
@@ -1078,8 +1095,17 @@
         // cache's rare list; every other tier is only reported.
         if (!isOwnAnswer(el.textContent)) {
           reportOutcome(el.textContent, "accepted", "other");
-          if (isKrillionBubble(el)) promoteKrillion(el.textContent);
+          if (isKrillionBubble(el)) promoteKrillion(el.textContent, "other");
         }
+      }
+      // Our own answer was marked said when it was submitted, so the
+      // block above skips its bubble. Read its tier here instead: log
+      // it once, and learn it into the rare list when it is krillion.
+      if (t && state.ownPlayed.has(t) && !state.ownTiers.has(t)) {
+        state.ownTiers.add(t);
+        const tier = bubbleTier(el);
+        elog("bubble_seen", { text: el.textContent, tier: tier || null, outcome: "accepted", own: true });
+        if (tier === "krillion") promoteKrillion(el.textContent, "own");
       }
     });
     // Rejected answers ("bad" bubbles) count as tried too, for every
@@ -1576,6 +1602,7 @@
       if (text) {
         state.awaitingResult = text;
         state.awaitingAt = Date.now();
+        noteOwnPlayed(text);
       }
     },
     true,

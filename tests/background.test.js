@@ -275,6 +275,22 @@ test("reportOutcome posts the outcome to the cache server", async () => {
   assert.equal(w.calls[0].headers["x-kch-token"], "tok");
 });
 
+test("promoteKrillion relays the source (own or other) to the server", async () => {
+  for (const [source, expected] of [["own", "own"], ["other", "other"], [undefined, "other"]]) {
+    const w = loadWorker({
+      settings: { ...SETTINGS, serverUrl: "http://localhost:8787" },
+      responses: [{ status: 200, json: { ok: true, stored: true } }],
+    });
+    await new Promise((resolve) => {
+      w.ctx.__listener({ type: "promoteKrillion", prompt: "Name a noodle dish", text: "Udon", tier: "krillion", source }, {}, resolve);
+    });
+    const call = w.calls.find((c) => c.url.includes("/api/promote"));
+    assert.ok(call, "promote request sent");
+    assert.equal(call.body.source, expected);
+    assert.equal(call.body.tier, "krillion");
+  }
+});
+
 test("getCacheStats returns the server prompt list", async () => {
   const w = loadWorker({
     settings: { ...SETTINGS, serverUrl: "http://localhost:8787" },
