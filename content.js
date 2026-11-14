@@ -1093,6 +1093,10 @@
   // that just ended, not the new one. A snapshot of the ending round
   // lets them be credited there.
   const PREV_ROUND_GRACE_MS = 2500;
+  // Nobody answers a new question this fast (the extension's own
+  // fastest first answer in the logs took over 1 s), so any bubble in
+  // this window is the previous round's last answer, whoever played it.
+  const PREV_ROUND_SURE_MS = 1000;
   // Whether a shown answer looks like the game's correction of what
   // we sent: "regency" shown as "regency era" (one contains the
   // other), or "donut" shown as "doughnut" (a small edit). An
@@ -1137,8 +1141,9 @@
   }
   // Whether this bubble belongs to the previous round; if so, it is
   // credited there (once) and the current round must ignore it. A
-  // bubble counts when it was already on screen at the change, or
-  // when it shows up within the grace period and is our own answer:
+  // bubble counts when it was already on screen at the change, when
+  // it shows up within PREV_ROUND_SURE_MS of it, or when it shows up
+  // within the grace period and is our own answer:
   // as submitted, or as the game corrected it (the round's pending
   // submission had no bubble yet, and nobody else could answer
   // during our turn).
@@ -1147,7 +1152,9 @@
     if (!prev || !t) return false;
     if (prev.claimed.get(el) === t) return true;
     const staleEl = prev.stale.get(el) === t;
-    const inGrace = Date.now() - prev.startedAt <= PREV_ROUND_GRACE_MS;
+    const age = Date.now() - prev.startedAt;
+    const inGrace = age <= PREV_ROUND_GRACE_MS;
+    const tooSoon = age <= PREV_ROUND_SURE_MS;
     if (!staleEl && !inGrace) return false;
     let own = prev.ownPlayed.has(t);
     if (!own && accepted && inGrace && prev.pending && !prev.pendingMatched && !prev.said.has(t) && looksLikeCorrection(prev.pending, el.textContent)) {
@@ -1155,7 +1162,7 @@
       prev.ownPlayed.add(t);
       prev.pendingMatched = true;
     }
-    if (!staleEl && !own) return false;
+    if (!staleEl && !own && !tooSoon) return false;
     prev.claimed.set(el, t);
     if (!accepted) return true;
     if (own) {

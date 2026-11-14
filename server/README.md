@@ -115,9 +115,10 @@ spelling of it: "donut" shown as "doughnut").
 
 When an answer ends a category, the next question appears at once
 while that answer's bubble is still on screen or about to show.
-Bubbles already on screen at the change, and your own answer's
-bubble arriving within 2.5 seconds of it, are credited to the
-question that just ended, never to the new one. The promotion records who played
+Bubbles already on screen at the change, any bubble arriving
+within 1 second of it (nobody answers a new question that fast),
+and your own answer's bubble arriving within 2.5 seconds of it are
+credited to the question that just ended, never to the new one. The promotion records who played
 it (`source`: `own` or `other`), and the dashboard tags your finds.
 Promotion copies rather than moves: a word already on that
 prompt's common bench keeps its common entry, but is served only

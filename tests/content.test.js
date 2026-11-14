@@ -1084,7 +1084,11 @@ test("bubbles left over when the question changes are credited to the question t
   g.setMyTurn(false);
   addPartyBubble(g, { text: "Vex", tier: "krillion" });
   g.setPrompt("Name a second dish", "CATEGORY 4");
-  await sleep(450);
+  await sleep(350);
+  // An opponent's last answer can land a moment after the change too;
+  // nobody could have answered the new question that fast.
+  addPartyBubble(g, { text: "Wisp" });
+  await sleep(100);
   // Our own answer's bubble lands just after, in corrected spelling.
   addPartyBubble(g, { text: "abby", tier: "krillion" });
   await sleep(900);
@@ -1096,6 +1100,7 @@ test("bubbles left over when the question changes are credited to the question t
   const reports = g.calls.filter((c) => c.type === "reportOutcome");
   assert.ok(!reports.some((c) => c.prompt === "Name a second dish"), "nothing is reported against the new question");
   assert.ok(reports.some((c) => c.text === "Vex" && c.source === "other" && c.prompt === "Name a noodle dish"));
+  assert.ok(reports.some((c) => c.text === "Wisp" && c.source === "other" && c.prompt === "Name a noodle dish"));
   assert.ok(reports.some((c) => c.text === "ab" && c.source === "own" && c.outcome === "accepted" && c.prompt === "Name a noodle dish"));
   // After the grace period, a genuinely new bubble belongs to the new question.
   await sleep(2400);
