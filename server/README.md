@@ -110,7 +110,14 @@ the extension promotes it into the rare list, nestled at index 4
 (5th place; shorter lists append at the end, still in the top 5).
 This covers opponents' answers and your own (your own bubble is
 recognised from what you submitted that round, whether the
-extension typed it or you did). The promotion records who played
+extension typed it or you did, including the game's corrected
+spelling of it: "donut" shown as "doughnut").
+
+When an answer ends a category, the next question appears at once
+while that answer's bubble is still on screen or about to show.
+Bubbles already on screen at the change, and your own answer's
+bubble arriving within 2.5 seconds of it, are credited to the
+question that just ended, never to the new one. The promotion records who played
 it (`source`: `own` or `other`), and the dashboard tags your finds.
 Promotion copies rather than moves: a word already on that
 prompt's common bench keeps its common entry, but is served only

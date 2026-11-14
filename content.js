@@ -53,6 +53,9 @@
     reportedOutcomes: new Set(), // party: norm|outcome pairs already reported this round
     ownPlayed: new Set(),        // party: norms this player submitted this round (auto or manual)
     ownTiers: new Set(),         // party: own bubbles whose tier was already logged this round
+    prevRound: null,             // party: the round that just ended, for its late bubbles
+    lastPending: null,           // party: { text, at } of a submission still awaiting its result when the prompt vanished
+    correctedPending: null,      // party: the pending submission whose corrected bubble was already matched
     promotedKrillions: new Set(), // party: norms already promoted this round
     copied: null,
     copiedTimer: null,
@@ -519,6 +522,7 @@
     const btn = dock ? $(".ds-dive-btn", dock) : null;
     state.awaitingResult = input.value.trim();
     state.awaitingAt = Date.now();
+    state.correctedPending = null;
     noteOwnPlayed(candidate, state.awaitingResult);
     setStatus('submitting "' + candidate + '"');
     elog("submit_attempt", { text: candidate, via: btn && !btn.disabled ? "button" : "enter" });
@@ -672,17 +676,21 @@
   }
   // One report per word+outcome per round: bubbles persist across
   // ticks, and the same evidence must not count many times.
-  function reportOutcome(text, outcome, source) {
-    if (!text || !state.prompt) return;
+  // round: the previous round's snapshot when a late bubble belongs
+  // to the question that just ended; omitted for the current round.
+  function reportOutcome(text, outcome, source, round) {
+    const prompt = round ? round.prompt : state.prompt;
+    if (!text || !prompt) return;
     const key = norm(text) + "|" + outcome;
-    if (state.reportedOutcomes.has(key)) return;
-    state.reportedOutcomes.add(key);
-    elog("outcome_reported", { text, outcome, source: source || "banner" });
+    const reported = round ? round.reported : state.reportedOutcomes;
+    if (reported.has(key)) return;
+    reported.add(key);
+    elog("outcome_reported", { prompt, text, outcome, source: source || "banner" });
     chrome.runtime.sendMessage({
       type: "reportOutcome",
-      prompt: state.prompt,
-      wordStyle: settings.wordStyle,
-      party: isParty(),
+      prompt,
+      wordStyle: round ? round.wordStyle : settings.wordStyle,
+      party: round ? round.party : isParty(),
       text,
       outcome,
       source: source || "banner",
@@ -720,15 +728,17 @@
   // per word per round: bubbles persist across ticks. The
   // acceptance itself is still reported by the caller, so the
   // cache also records it as accepted for curation.
-  function promoteKrillion(text, source) {
-    if (!text || !state.prompt) return;
+  function promoteKrillion(text, source, round) {
+    const prompt = round ? round.prompt : state.prompt;
+    if (!text || !prompt) return;
     const key = norm(text);
-    if (state.promotedKrillions.has(key)) return;
-    state.promotedKrillions.add(key);
-    elog("promote_sent", { text, source: source || "other" });
+    const promoted = round ? round.promoted : state.promotedKrillions;
+    if (promoted.has(key)) return;
+    promoted.add(key);
+    elog("promote_sent", { prompt, text, source: source || "other" });
     chrome.runtime.sendMessage({
       type: "promoteKrillion",
-      prompt: state.prompt,
+      prompt,
       text,
       tier: "krillion",
       source: source || "other",
@@ -830,6 +840,7 @@
     // when there is nothing new to capture.
     captureLeftover();
     cancelTyping();
+    const prevRound = snapshotPrevRound();
     // The game keeps the last submitted answer in the box into the next
     // category. The captured text above is what lets the next round
     // tell that leftover from text the player is typing fresh. Only
@@ -875,6 +886,9 @@
       promotedKrillions: new Set(),
       ownPlayed: new Set(),
       ownTiers: new Set(),
+      prevRound,
+      lastPending: null,
+      correctedPending: null,
       copied: null,
     });
     fetchCandidates(prompt, []);
@@ -1073,6 +1087,99 @@
     return best.c;
   }
 
+  // When the category changes, the last answer's bubble is often
+  // still on screen, or appears a moment later: the game moves on as
+  // soon as that answer lands. Those bubbles belong to the question
+  // that just ended, not the new one. A snapshot of the ending round
+  // lets them be credited there.
+  const PREV_ROUND_GRACE_MS = 2500;
+  // Whether a shown answer looks like the game's correction of what
+  // we sent: "regency" shown as "regency era" (one contains the
+  // other), or "donut" shown as "doughnut" (a small edit). An
+  // unrelated word is someone else's, whatever the timing.
+  function looksLikeCorrection(sent, shown) {
+    const a = norm(sent), b = norm(shown);
+    if (!a || !b || a === b) return false;
+    if (a.includes(b) || b.includes(a)) return true;
+    const m = a.length, n = b.length;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+      const cur = [i];
+      for (let j = 1; j <= n; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[n] <= Math.ceil(0.4 * Math.max(m, n));
+  }
+  function snapshotPrevRound() {
+    if (!state.prompt || !isParty()) return null;
+    const stale = new Map();
+    document.querySelectorAll(".pf-say.on:not(.caret)").forEach((el) => {
+      const t = norm(el.textContent);
+      if (t) stale.set(el, t);
+    });
+    const recent = state.lastPending && Date.now() - state.lastPending.at < 8000 ? state.lastPending.text : null;
+    return {
+      prompt: state.prompt,
+      wordStyle: settings.wordStyle,
+      party: true,
+      said: state.said,
+      ownPlayed: state.ownPlayed,
+      ownTiers: state.ownTiers,
+      pending: state.awaitingResult || recent,
+      reported: state.reportedOutcomes,
+      promoted: state.promotedKrillions,
+      startedAt: Date.now(),
+      stale,
+      claimed: new Map(),
+    };
+  }
+  // Whether this bubble belongs to the previous round; if so, it is
+  // credited there (once) and the current round must ignore it. A
+  // bubble counts when it was already on screen at the change, or
+  // when it shows up within the grace period and is our own answer:
+  // as submitted, or as the game corrected it (the round's pending
+  // submission had no bubble yet, and nobody else could answer
+  // during our turn).
+  function claimForPrevRound(el, t, accepted) {
+    const prev = state.prevRound;
+    if (!prev || !t) return false;
+    if (prev.claimed.get(el) === t) return true;
+    const staleEl = prev.stale.get(el) === t;
+    const inGrace = Date.now() - prev.startedAt <= PREV_ROUND_GRACE_MS;
+    if (!staleEl && !inGrace) return false;
+    let own = prev.ownPlayed.has(t);
+    if (!own && accepted && inGrace && prev.pending && !prev.pendingMatched && !prev.said.has(t) && looksLikeCorrection(prev.pending, el.textContent)) {
+      own = true; // the pending answer, as the game spelled it
+      prev.ownPlayed.add(t);
+      prev.pendingMatched = true;
+    }
+    if (!staleEl && !own) return false;
+    prev.claimed.set(el, t);
+    if (!accepted) return true;
+    if (own) {
+      if (!prev.ownTiers.has(t)) {
+        prev.ownTiers.add(t);
+        const tier = bubbleTier(el);
+        elog("bubble_seen", { prompt: prev.prompt, text: el.textContent, tier: tier || null, outcome: "accepted", own: true, lateBubble: true });
+        if (tier === "krillion") promoteKrillion(el.textContent, "own", prev);
+      }
+      // The bubble is the acceptance of the submission that ended
+      // the round; the turn-pass path never ran for it.
+      if (prev.pending) {
+        reportOutcome(prev.pending, "accepted", "own", prev);
+        prev.pending = null;
+      }
+    } else if (!prev.said.has(t)) {
+      prev.said.add(t);
+      elog("bubble_seen", { prompt: prev.prompt, text: el.textContent, tier: bubbleTier(el) || null, outcome: "accepted", lateBubble: true });
+      reportOutcome(el.textContent, "accepted", "other", prev);
+      if (isKrillionBubble(el)) promoteKrillion(el.textContent, "other", prev);
+    }
+    return true;
+  }
+
   function partyTick() {
     let changed = false;
     // Seats show accepted answers in speech bubbles — but the holder's
@@ -1081,8 +1188,18 @@
     // "already used" and blocked its submit. Exclude caret bubbles;
     // accepted ("ok"/"rest") and rejected ("bad", via the banner below)
     // answers still count.
+    // While our submission awaits its result the turn is still ours,
+    // so a new accepted bubble now is our answer, possibly in the
+    // game's corrected spelling ("donut" shown as "doughnut").
+    const pending = state.awaitingResult && Date.now() - state.awaitingAt < 8000 ? state.awaitingResult : null;
     document.querySelectorAll(".pf-say.on:not(.bad):not(.caret)").forEach((el) => {
       const t = norm(el.textContent);
+      if (claimForPrevRound(el, t, true)) return;
+      if (t && !state.said.has(t) && pending && !state.ownPlayed.has(t) && !state.correctedPending &&
+          looksLikeCorrection(pending, el.textContent)) {
+        state.correctedPending = pending;
+        noteOwnPlayed(el.textContent);
+      }
       if (t && !state.said.has(t)) {
         // Own bubbles are logged once, with own: true, just below.
         if (!state.ownPlayed.has(t)) elog("bubble_seen", { text: el.textContent, tier: bubbleTier(el) || null, outcome: "accepted" });
@@ -1093,7 +1210,7 @@
         // bubble carries no reason, but acceptance needs none.
         // A krillion-tier bubble is additionally learned into the
         // cache's rare list; every other tier is only reported.
-        if (!isOwnAnswer(el.textContent)) {
+        if (!isOwnAnswer(el.textContent) && !state.ownPlayed.has(t)) {
           reportOutcome(el.textContent, "accepted", "other");
           if (isKrillionBubble(el)) promoteKrillion(el.textContent, "other");
         }
@@ -1124,6 +1241,7 @@
     document.querySelectorAll(".pf-say.on.bad").forEach((el) => {
       const t = norm(el.textContent);
       if (!t) return;
+      if (claimForPrevRound(el, t, false)) return;
       if (state.confirmed.has(t)) {
         if (!isOwnAnswer(el.textContent)) reportOutcome(el.textContent, "duplicate", "other");
         return;
@@ -1426,6 +1544,7 @@
         const captured = state.wasMyTurn && captureLeftover(true);
         cancelTyping();
         state.wasMyTurn = false;
+        if (state.awaitingResult) state.lastPending = { text: state.awaitingResult, at: Date.now() };
         state.awaitingResult = null;
         state.enterDiag = null;
         state.roundKey = null;
@@ -1602,6 +1721,7 @@
       if (text) {
         state.awaitingResult = text;
         state.awaitingAt = Date.now();
+        state.correctedPending = null;
         noteOwnPlayed(text);
       }
     },

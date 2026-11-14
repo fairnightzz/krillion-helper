@@ -1038,6 +1038,72 @@ test("krillion-tier bubbles are promoted once, from --cc, tagged own or other", 
   assert.equal(g.calls.filter((c) => c.type === "promoteKrillion").length, 3);
 });
 
+function addPartyBubble(g, { text, cls = "ok", tier }) {
+  const el = g.doc.createElement("div");
+  el.classList.add("pf-say", "on", cls);
+  el.textContent = text;
+  if (tier) {
+    const cc = `var(--tier-${tier}, #8fa3c4)`;
+    el.style.setProperty("--cc", cc);
+    el.setAttribute("style", `left: 0px; bottom: -109px; --cc: ${cc};`);
+  }
+  g.root.appendChild(el);
+  return el;
+}
+
+test("our answer in the game's corrected spelling is recognised as ours", async (t) => {
+  const g = setup({
+    responder: (msg) => (msg.type === "getAnswers" ? { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] } : { ok: true }),
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.includes("ab"), 5000, "first submit");
+  // The game shows "ab" as "abby" (like "donut" shown as "doughnut")
+  // while the turn is still ours, then the turn passes.
+  addPartyBubble(g, { text: "abby", tier: "krillion" });
+  await sleep(700);
+  g.setMyTurn(false);
+  await sleep(700);
+  const promotes = g.calls.filter((c) => c.type === "promoteKrillion");
+  assert.deepEqual(promotes.map((c) => [c.text, c.source, c.prompt]), [["abby", "own", "Name a noodle dish"]]);
+  const reports = g.calls.filter((c) => c.type === "reportOutcome");
+  assert.ok(!reports.some((c) => c.text === "abby" && c.source === "other"), "corrected own answer is not an opponent's");
+  assert.ok(reports.some((c) => c.text === "ab" && c.outcome === "accepted" && c.source === "own"));
+});
+
+test("bubbles left over when the question changes are credited to the question that ended", async (t) => {
+  const g = setup({
+    responder: (msg) =>
+      msg.type !== "getAnswers" ? { ok: true }
+        : msg.prompt.includes("second") ? { ok: true, rare: ["xy", "zw"], common: ["qq", "rr"] }
+        : { ok: true, rare: ["ab", "cd"], common: ["ef", "gh"] },
+  });
+  t.after(() => g.teardown());
+  await waitFor(() => g.submittedTexts.includes("ab"), 5000, "first submit");
+  // Our answer ends the category: the next question appears at once,
+  // with the previous round's last opponent bubble still on screen.
+  g.setMyTurn(false);
+  addPartyBubble(g, { text: "Vex", tier: "krillion" });
+  g.setPrompt("Name a second dish", "CATEGORY 4");
+  await sleep(450);
+  // Our own answer's bubble lands just after, in corrected spelling.
+  addPartyBubble(g, { text: "abby", tier: "krillion" });
+  await sleep(900);
+  const promotes = g.calls.filter((c) => c.type === "promoteKrillion");
+  assert.deepEqual(
+    promotes.map((c) => [c.text, c.source, c.prompt]).sort(),
+    [["Vex", "other", "Name a noodle dish"], ["abby", "own", "Name a noodle dish"]],
+  );
+  const reports = g.calls.filter((c) => c.type === "reportOutcome");
+  assert.ok(!reports.some((c) => c.prompt === "Name a second dish"), "nothing is reported against the new question");
+  assert.ok(reports.some((c) => c.text === "Vex" && c.source === "other" && c.prompt === "Name a noodle dish"));
+  assert.ok(reports.some((c) => c.text === "ab" && c.source === "own" && c.outcome === "accepted" && c.prompt === "Name a noodle dish"));
+  // After the grace period, a genuinely new bubble belongs to the new question.
+  await sleep(2400);
+  addPartyBubble(g, { text: "Quill" });
+  await sleep(700);
+  assert.ok(g.calls.some((c) => c.type === "reportOutcome" && c.text === "Quill" && c.prompt === "Name a second dish"));
+});
+
 test("game events are logged and relayed to the server log", async (t) => {
   const g = setup({
     responder: (msg) =>
